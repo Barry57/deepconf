@@ -16,12 +16,12 @@ import os
 import argparse
 
 # Configuration
-MODEL_PATH = "openai/gpt-oss-120b"
-MAX_TOKENS = 130000
+MODEL_PATH = "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
+MAX_TOKENS = 64000
 DATASET_FILE = "aime25.jsonl"
 
 # Algorithm parameters
-TOTAL_BUDGET = 512
+TOTAL_BUDGET = 256
 WINDOW_SIZE = 2048
 REASONING_EFFORT = 'high'
 
