@@ -1,0 +1,110 @@
+import os
+import time
+import argparse
+import pandas as pd
+import numpy as np
+from datetime import datetime
+from vllm import LLM, SamplingParams
+from transformers import AutoTokenizer
+from helper import process_batch_results, weighted_majority_vote
+
+MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
+MAX_TOKENS = 512
+TOTAL_BUDGET = 256
+WARMUP_TRACES = 16
+CONFIDENCE_PERCENTILE = 90
+WINDOW_SIZE = 5
+
+def main(input_excel):
+    os.makedirs("outputs", exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_excel = os.path.join("outputs", f"online_translation_{timestamp}.xlsx")
+
+    total_start_time = time.time()
+
+    # 1. 读取 Excel
+    df = pd.read_excel(input_excel)
+    if 'source' not in df.columns:
+        raise ValueError("Excel 文件中必须包含 'source' 列")
+
+    # 2. 初始化 tokenizer & LLM
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
+    llm = LLM(
+        model=MODEL_PATH,
+        tensor_parallel_size=len(os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")),
+        enable_prefix_caching=True,
+        trust_remote_code=True,
+    )
+
+    translations = []
+    token_confidences_all = []
+    group_conf_all = []
+
+    # 3. 循环处理每一行
+    for idx, row in df.iterrows():
+        source_text = str(row['source'])
+        prompt = f"For the translation task of medical drugs, translate the following english sentence into chinese:\n{source_text}\n"
+
+        # warmup 阶段
+        warmup_params = SamplingParams(
+            n=WARMUP_TRACES,
+            temperature=0.6,
+            top_p=0.95,
+            max_tokens=MAX_TOKENS,
+            logprobs=20,
+        )
+        warmup_outputs = llm.generate([prompt], warmup_params)
+        warmup_result = process_batch_results(warmup_outputs, ground_truth="", window_size=WINDOW_SIZE)
+        conf_bar = float(np.percentile(warmup_result['min_confs'], CONFIDENCE_PERCENTILE))
+
+        # final 阶段
+        final_params = SamplingParams(
+            n=TOTAL_BUDGET - WARMUP_TRACES,
+            temperature=0.6,
+            top_p=0.95,
+            max_tokens=MAX_TOKENS,
+            logprobs=20,
+            extra_args={'enable_conf': True, 'window_size': WINDOW_SIZE, 'threshold': conf_bar}
+        )
+        final_outputs = llm.generate([prompt], final_params)
+        final_result = process_batch_results(final_outputs, ground_truth="", window_size=WINDOW_SIZE)
+
+        # 合并 traces
+        traces = warmup_result['traces'] + final_result['traces']
+
+        # 投票
+        voting_answers = []
+        voting_weights = []
+        for trace in traces:
+            if trace['min_conf'] >= conf_bar and trace['text']:
+                voting_answers.append(trace['text'])
+                voting_weights.append(trace['min_conf'])
+        final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
+
+        translations.append(final_translation)
+        token_confidences_all.append(
+            "; ".join([",".join([f"{c:.4f}" for c in t['confs']]) for t in traces])
+        )
+        group_conf_all.append(
+            "; ".join([",".join([f"{gc:.4f}" for gc in t['group_confs']]) for t in traces])
+        )
+
+        if (idx + 1) % 10 == 0:
+            print(f"Processed {idx+1}/{len(df)} rows...")
+
+    # 4. 保存结果
+    df['translation'] = translations
+    df['token_confidences'] = token_confidences_all
+    df['group_conf'] = group_conf_all
+    df.to_excel(output_excel, index=False)
+    print(f"Results saved to {output_excel}")
+    print(f"Total execution time: {time.time() - total_start_time:.2f}s")
+
+def parse_args():
+    parser = argparse.ArgumentParser(description='Online translation with warmup threshold')
+    parser.add_argument('--input_excel', type=str, required=True)
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_args()
+    main(args.input_excel)
