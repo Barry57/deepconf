@@ -11,18 +11,21 @@ from helper import process_batch_results_offline, weighted_majority_vote
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
 TOTAL_BUDGET = 256
-WINDOW_SIZE = 100
+WINDOW_SIZE = 5
 
 def make_token_conf_pairs(tokenizer, text, confs):
     """
     将一条路径的 tokens 与对应置信度配对为 'token:0.####'，并返回拼接后的字符串。
-    若 tokens 与 confs 长度不一致，按较短的一侧对齐。
+    使用 decode 单个 token id 的方式避免乱码。
     """
     if not text or not confs:
         return ""
-    tokens = tokenizer.tokenize(text)
-    n = min(len(tokens), len(confs))
-    pairs = [f"{tokens[i]}:{confs[i]:.4f}" for i in range(n)]
+    token_ids = tokenizer.encode(text, add_special_tokens=False)
+    n = min(len(token_ids), len(confs))
+    pairs = []
+    for i in range(n):
+        token_str = tokenizer.decode([token_ids[i]]).strip()
+        pairs.append(f"{token_str}:{confs[i]:.4f}")
     return ",".join(pairs)
 
 def main(input_excel):
