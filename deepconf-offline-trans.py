@@ -1,9 +1,3 @@
-"""
-Databricks batch translation with offline group_conf extraction
-使用 helper.py 中的函数 + 多路径加权投票
-Prompt 固定为医药翻译任务格式
-"""
-
 import os
 import time
 import argparse
@@ -11,36 +5,50 @@ import pandas as pd
 from datetime import datetime
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
-from helper_trans import process_batch_results_offline, weighted_majority_vote
+from helper import process_batch_results_offline, weighted_majority_vote
 
-# ====== 配置 ======
+# ====== 配置（offline）======
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
-TOTAL_BUDGET = 256   # 生成路径数
-WINDOW_SIZE = 5    # group_conf 滑动窗口大小
+TOTAL_BUDGET = 256
+WINDOW_SIZE = 100
+
+def make_token_conf_pairs(tokenizer, text, confs):
+    """
+    将一条路径的 tokens 与对应置信度配对为 'token:0.####'，并返回拼接后的字符串。
+    若 tokens 与 confs 长度不一致，按较短的一侧对齐。
+    """
+    if not text or not confs:
+        return ""
+    tokens = tokenizer.tokenize(text)
+    n = min(len(tokens), len(confs))
+    pairs = [f"{tokens[i]}:{confs[i]:.4f}" for i in range(n)]
+    return ",".join(pairs)
 
 def main(input_excel):
-    # 创建 outputs 目录
     os.makedirs("outputs", exist_ok=True)
-
-    # 生成带时间戳的输出文件名
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     output_excel = os.path.join("outputs", f"offline_translation_{timestamp}.xlsx")
 
     total_start_time = time.time()
 
-    # 1. 读取 Excel
-    print(f"Loading Excel from {input_excel}...")
+    # 1) 读取 Excel
     df = pd.read_excel(input_excel)
     if 'source' not in df.columns:
         raise ValueError("Excel 文件中必须包含 'source' 列")
-    print(f"Loaded {len(df)} rows.")
+    if 'Qwen-TM32-Translation-TER' not in df.columns:
+        raise ValueError("Excel 文件中必须包含 'Qwen-TM32-Translation-TER' 列")
 
-    # 2. 初始化 tokenizer
+    # 2) 分层抽样：最低 TER 10 行 + 其他随机 10 行
+    lowest_10 = df.nsmallest(10, 'Qwen-TM32-Translation-TER')
+    remaining = df.drop(lowest_10.index)
+    random_10 = remaining.sample(n=min(10, len(remaining)), random_state=42)
+    df = pd.concat([lowest_10, random_10]).reset_index(drop=True)
+
+    # 3) 初始化 tokenizer & LLM
     print("Initializing tokenizer...")
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
 
-    # 3. 初始化 vLLM
     print("Initializing vLLM engine...")
     llm = LLM(
         model=MODEL_PATH,
@@ -50,15 +58,16 @@ def main(input_excel):
     )
 
     translations = []
-    token_confidences_all = []
+    token_conf_pairs_all = []
     group_conf_all = []
 
-    # 4. 循环处理每一行
+    # 4) 循环处理每一行
     for idx, row in df.iterrows():
-        source_text = str(row['source'])
-
-        # 按你的要求构造 prompt
-        prompt = f"For the translation task of medical drugs, translate the following english sentence into chinese:\n{source_text}\n"
+        source_text = str(row['source']).strip()
+        prompt = (
+            "For the translation task of medical drugs, translate the following english sentence into chinese:\n"
+            f"{source_text}\n"
+        )
 
         sampling_params = SamplingParams(
             n=TOTAL_BUDGET,
@@ -69,49 +78,49 @@ def main(input_excel):
             logprobs=20,
         )
 
-        # 调用模型生成
+        # 生成与离线处理
         outputs = llm.generate([prompt], sampling_params)
-
-        # 用 helper.process_batch_results_offline 解析结果（已包含 confs 和 group_confs）
         result = process_batch_results_offline(outputs, ground_truth="", window_size=WINDOW_SIZE)
 
-        # ===== 多路径加权投票 =====
+        # 多路径加权投票（权重=平均 group_conf）
         voting_answers = []
         voting_weights = []
         for trace in result['traces']:
-            if trace['text']:
+            if trace.get('text'):
                 voting_answers.append(trace['text'])
-                avg_conf = sum(trace['group_confs']) / len(trace['group_confs']) if trace.get('group_confs') else 1.0
+                gcs = trace.get('group_confs') or []
+                avg_conf = (sum(gcs) / len(gcs)) if gcs else 1.0
                 voting_weights.append(avg_conf)
 
-        final_translation = weighted_majority_vote(voting_answers, voting_weights)
-        translations.append(final_translation if final_translation else "")
+        final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
+        translations.append(final_translation)
 
-        # 拼接 token_confidences（每条路径用分号分隔）
-        token_confidences_all.append(
-            "; ".join([",".join([f"{c:.4f}" for c in trace['confs']]) for trace in result['traces']])
-        )
+        # token:score 配对（每条路径用 "; " 分隔）
+        per_trace_pairs = []
+        for trace in result['traces']:
+            pairs_str = make_token_conf_pairs(tokenizer, trace.get('text', ''), trace.get('confs', []))
+            per_trace_pairs.append(pairs_str)
+        token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
 
-        # 拼接 group_conf（每条路径用分号分隔）
+        # group_conf（每条路径用分号分隔）
         group_conf_all.append(
-            "; ".join([",".join([f"{gc:.4f}" for gc in trace['group_confs']]) for trace in result['traces']])
+            " ; ".join([",".join([f"{gc:.4f}" for gc in (t.get('group_confs') or [])]) for t in result['traces']])
         )
 
-        if (idx + 1) % 50 == 0:
+        if (idx + 1) % 5 == 0:
             print(f"Processed {idx+1}/{len(df)} rows...")
 
-    # 5. 保存结果
+    # 5) 保存结果
     df['translation'] = translations
-    df['token_confidences'] = token_confidences_all
+    df['token_conf_pairs'] = token_conf_pairs_all
     df['group_conf'] = group_conf_all
 
     df.to_excel(output_excel, index=False)
     print(f"Results saved to {output_excel}")
     print(f"Total execution time: {time.time() - total_start_time:.2f}s")
 
-# ====== CLI ======
 def parse_args():
-    parser = argparse.ArgumentParser(description='Batch translation (medical drugs) with offline group_conf extraction + weighted voting')
+    parser = argparse.ArgumentParser(description='Offline translation with weighted voting and token-level scores')
     parser.add_argument('--input_excel', type=str, required=True, help='输入 Excel 文件路径')
     return parser.parse_args()
 
