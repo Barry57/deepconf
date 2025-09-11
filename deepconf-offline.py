@@ -18,7 +18,7 @@ import argparse
 # Configuration
 MODEL_PATH = "deepseek-ai/DeepSeek-R1-0528-Qwen3-8B"
 MAX_TOKENS = 64000
-DATASET_FILE = "aime25.jsonl"
+DATASET_FILE = "aime_25.jsonl"
 
 # Algorithm parameters
 TOTAL_BUDGET = 256
