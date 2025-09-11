@@ -107,7 +107,7 @@ def main(input_excel):
 
         # group_conf（每条路径用分号分隔）
         group_conf_all.append(
-            " ; ".join([",".join([f"{gc:.4f}" for gc in (t.get('group_confs') or [])]) for t in result['traces']])
+            "; ".join([",".join([f"{gc:.4f}" for gc in trace['group_confs']]) for trace in result['traces']])
         )
 
         if (idx + 1) % 5 == 0:
