@@ -11,9 +11,7 @@ import pandas as pd
 from datetime import datetime
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
-
-# 从 helper.py 导入已有函数
-from helper import process_batch_results_offline, weighted_majority_vote
+from helper_trans import process_batch_results_offline, weighted_majority_vote
 
 # ====== 配置 ======
 MODEL_PATH = "/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
