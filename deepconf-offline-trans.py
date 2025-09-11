@@ -11,7 +11,7 @@ from helper import process_batch_results_offline, weighted_majority_vote
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
 TOTAL_BUDGET = 256
-WINDOW_SIZE = 5
+WINDOW_SIZE = 2
 
 def make_token_conf_pairs(tokenizer, text, confs):
     """
