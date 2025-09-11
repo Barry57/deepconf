@@ -16,7 +16,7 @@ from helper_trans import process_batch_results_offline, weighted_majority_vote
 # ====== 配置 ======
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
-TOTAL_BUDGET = 5   # 生成路径数
+TOTAL_BUDGET = 256   # 生成路径数
 WINDOW_SIZE = 5    # group_conf 滑动窗口大小
 
 def main(input_excel):
