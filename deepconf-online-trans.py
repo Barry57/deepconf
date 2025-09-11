@@ -111,7 +111,7 @@ def main(input_excel):
 
         # group_conf
         group_conf_all.append(
-            "; ".join([",".join([f"{gc:.4f}" for gc in t['group_confs']]) for t in traces])
+            "; ".join([",".join([f"{gc:.4f}" for gc in trace['group_confs']]) for trace in result['traces']])
         )
 
         if (idx + 1) % 5 == 0:
