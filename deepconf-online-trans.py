@@ -15,6 +15,18 @@ WARMUP_TRACES = 16
 CONFIDENCE_PERCENTILE = 90
 WINDOW_SIZE = 5
 
+def make_token_conf_pairs(tokenizer, text, confs):
+    """将 token 与置信度配对为 'token:score'，避免乱码"""
+    if not text or not confs:
+        return ""
+    token_ids = tokenizer.encode(text, add_special_tokens=False)
+    n = min(len(token_ids), len(confs))
+    pairs = []
+    for i in range(n):
+        token_str = tokenizer.decode([token_ids[i]]).strip()
+        pairs.append(f"{token_str}:{confs[i]:.4f}")
+    return ",".join(pairs)
+
 def main(input_excel):
     os.makedirs("outputs", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -26,8 +38,16 @@ def main(input_excel):
     df = pd.read_excel(input_excel)
     if 'source' not in df.columns:
         raise ValueError("Excel 文件中必须包含 'source' 列")
+    if 'Qwen-TM32-Translation-TER' not in df.columns:
+        raise ValueError("Excel 文件中必须包含 'Qwen-TM32-Translation-TER' 列")
 
-    # 2. 初始化 tokenizer & LLM
+    # 2. 分层抽样：最低 TER 10 行 + 其他随机 10 行
+    lowest_10 = df.nsmallest(10, 'Qwen-TM32-Translation-TER')
+    remaining = df.drop(lowest_10.index)
+    random_10 = remaining.sample(n=min(10, len(remaining)), random_state=42)
+    df = pd.concat([lowest_10, random_10]).reset_index(drop=True)
+
+    # 3. 初始化 tokenizer & LLM
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
     llm = LLM(
         model=MODEL_PATH,
@@ -37,10 +57,10 @@ def main(input_excel):
     )
 
     translations = []
-    token_confidences_all = []
+    token_conf_pairs_all = []
     group_conf_all = []
 
-    # 3. 循环处理每一行
+    # 4. 循环处理每一行
     for idx, row in df.iterrows():
         source_text = str(row['source'])
         prompt = f"For the translation task of medical drugs, translate the following english sentence into chinese:\n{source_text}\n"
@@ -80,28 +100,33 @@ def main(input_excel):
                 voting_answers.append(trace['text'])
                 voting_weights.append(trace['min_conf'])
         final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
-
         translations.append(final_translation)
-        token_confidences_all.append(
-            "; ".join([",".join([f"{c:.4f}" for c in t['confs']]) for t in traces])
-        )
+
+        # token:score 配对
+        per_trace_pairs = []
+        for trace in traces:
+            pairs_str = make_token_conf_pairs(tokenizer, trace.get('text', ''), trace.get('confs', []))
+            per_trace_pairs.append(pairs_str)
+        token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
+
+        # group_conf
         group_conf_all.append(
             "; ".join([",".join([f"{gc:.4f}" for gc in t['group_confs']]) for t in traces])
         )
 
-        if (idx + 1) % 10 == 0:
+        if (idx + 1) % 5 == 0:
             print(f"Processed {idx+1}/{len(df)} rows...")
 
-    # 4. 保存结果
+    # 5. 保存结果
     df['translation'] = translations
-    df['token_confidences'] = token_confidences_all
+    df['token_conf_pairs'] = token_conf_pairs_all
     df['group_conf'] = group_conf_all
     df.to_excel(output_excel, index=False)
     print(f"Results saved to {output_excel}")
     print(f"Total execution time: {time.time() - total_start_time:.2f}s")
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Online translation with warmup threshold')
+    parser = argparse.ArgumentParser(description='Online translation with warmup threshold, sampling, and token-score matching')
     parser.add_argument('--input_excel', type=str, required=True)
     return parser.parse_args()
 
