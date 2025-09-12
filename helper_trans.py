@@ -110,15 +110,7 @@ def process_output(output, ground_truth, window_size, tokenizer=None):
     text = output.text
     token_ids = output.token_ids
     logprobs = output.logprobs
-    if hasattr(output, "tokens") and output.tokens:
-        tokens = output.tokens
-    elif tokenizer and text:
-        token_ids = tokenizer.encode(text, add_special_tokens=False)
-        tokens = [tokenizer.decode([tid]).strip() for tid in token_ids]
-    elif tokenizer and token_ids:
-        tokens = tokenizer.convert_ids_to_tokens(token_ids)
-    else:
-        tokens = []
+    tokens = [tokenizer.decode([tid]).strip() for tid in token_ids]
     confs = compute_confidence(logprobs) if logprobs else []
     group_conf_tokens = compute_least_grouped_with_tokens(tokens, confs, window_size)
     extracted_answer = extract_answer(text)
@@ -141,13 +133,13 @@ def process_output(output, ground_truth, window_size, tokenizer=None):
         "is_correct": is_correct,
     }
 
-def process_batch_results(batch_outputs, ground_truth, window_size):
+def process_batch_results(batch_outputs, ground_truth, window_size, tokenizer):
     question_outputs = batch_outputs[0].outputs
     traces = []
     min_confs = []
     total_tokens = 0
     for output in question_outputs:
-        trace_data = process_output(output, ground_truth, window_size)
+        trace_data = process_output(output, ground_truth, window_size, tokenizer)
         traces.append(trace_data)
         min_confs.append(trace_data["min_conf"])
         total_tokens += trace_data["num_tokens"]
