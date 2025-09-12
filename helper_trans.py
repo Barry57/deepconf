@@ -148,38 +148,6 @@ def process_batch_results(batch_outputs, ground_truth, window_size):
         'num_traces': len(traces)
     }
 
-# === 修改后的离线版本，增加 group_conf 计算 ===
-def process_output_offline(output, ground_truth, window_size, tokenizer=None):
-    text = output.text
-    token_ids = output.token_ids
-    logprobs = output.logprobs
-    if hasattr(output, "tokens"):
-        tokens = output.tokens
-    elif tokenizer and token_ids:
-        tokens = tokenizer.convert_ids_to_tokens(token_ids)
-    else:
-        tokens = []
-    confs = compute_confidence(logprobs) if logprobs else []
-    sliding_window = compute_least_grouped(confs, group_size=window_size) if confs else [0]
-    extracted_answer = extract_answer(text)
-    is_correct = False
-    if extracted_answer and ground_truth:
-        try:
-            is_correct = equal_func(extracted_answer, ground_truth)
-        except:
-            is_correct = str(extracted_answer) == str(ground_truth)
-    return {
-        "stop_reason": output.finish_reason,
-        "text": text,
-        "token_ids": token_ids,
-        "num_tokens": len(token_ids) if token_ids else 0,
-        "confs": confs,
-        "group_confs": sliding_window,
-        "min_conf": min(sliding_window) if sliding_window else 0,
-        "extracted_answer": extracted_answer,
-        "is_correct": is_correct,
-    }
-
 def compute_least_grouped_with_tokens(tokens, confs, group_size):
     """返回 [(窗口token字符串, 窗口平均分), ...]"""
     if not confs or not tokens:
@@ -193,6 +161,41 @@ def compute_least_grouped_with_tokens(tokens, confs, group_size):
         avg_conf = sum(window_confs) / len(window_confs)
         results.append(("".join(window_tokens), avg_conf))
     return results
+
+# === 修改后的离线版本，增加 group_conf 计算 ===
+def process_output_offline(output, ground_truth, window_size, tokenizer=None):
+    text = output.text
+    token_ids = output.token_ids
+    logprobs = output.logprobs
+
+    if hasattr(output, "tokens"):
+        tokens = output.tokens
+    elif tokenizer and token_ids:
+        tokens = tokenizer.convert_ids_to_tokens(token_ids)
+    else:
+        tokens = []
+    confs = compute_confidence(logprobs) if logprobs else []
+    # 新增：窗口 token + 平均分
+    group_conf_tokens = compute_least_grouped_with_tokens(tokens, confs, window_size)
+    extracted_answer = extract_answer(text)
+    is_correct = False
+    if extracted_answer and ground_truth:
+        try:
+            is_correct = equal_func(extracted_answer, ground_truth)
+        except:
+            is_correct = str(extracted_answer) == str(ground_truth)
+    return {
+        "stop_reason": output.finish_reason,
+        "text": text,
+        "token_ids": token_ids,
+        "num_tokens": len(token_ids) if token_ids else 0,
+        "tokens": tokens,
+        "confs": confs,
+        "group_conf_tokens": group_conf_tokens,
+        "min_conf": min([score for _, score in group_conf_tokens]) if group_conf_tokens else 0,
+        "extracted_answer": extracted_answer,
+        "is_correct": is_correct,
+    }
 
 def process_batch_results_offline(batch_outputs, ground_truth, window_size):
     question_outputs = batch_outputs[0].outputs
