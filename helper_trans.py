@@ -175,15 +175,16 @@ def process_output_offline(output, ground_truth, window_size, tokenizer=None):
     text = output.text
     token_ids = output.token_ids
     logprobs = output.logprobs
-
-    if hasattr(output, "tokens"):
+    if tokenizer and text:
+        token_ids = tokenizer.encode(text, add_special_tokens=False)
+        tokens = [tokenizer.decode([tid]).strip() for tid in token_ids]
+    elif hasattr(output, "tokens"):
         tokens = output.tokens
     elif tokenizer and token_ids:
         tokens = tokenizer.convert_ids_to_tokens(token_ids)
     else:
         tokens = []
     confs = compute_confidence(logprobs) if logprobs else []
-    # 新增：窗口 token + 平均分
     group_conf_tokens = compute_least_grouped_with_tokens(tokens, confs, window_size)
     extracted_answer = extract_answer(text)
     is_correct = False
