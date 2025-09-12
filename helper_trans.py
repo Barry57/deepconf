@@ -149,10 +149,16 @@ def process_batch_results(batch_outputs, ground_truth, window_size):
     }
 
 # === 修改后的离线版本，增加 group_conf 计算 ===
-def process_output_offline(output, ground_truth, window_size):
+def process_output_offline(output, ground_truth, window_size, tokenizer=None):
     text = output.text
     token_ids = output.token_ids
     logprobs = output.logprobs
+    if hasattr(output, "tokens"):
+        tokens = output.tokens
+    elif tokenizer and token_ids:
+        tokens = tokenizer.convert_ids_to_tokens(token_ids)
+    else:
+        tokens = []
     confs = compute_confidence(logprobs) if logprobs else []
     sliding_window = compute_least_grouped(confs, group_size=window_size) if confs else [0]
     extracted_answer = extract_answer(text)
@@ -166,13 +172,15 @@ def process_output_offline(output, ground_truth, window_size):
         "stop_reason": output.finish_reason,
         "text": text,
         "token_ids": token_ids,
+        "tokens": tokens,
         "num_tokens": len(token_ids) if token_ids else 0,
         "confs": confs,
-        "group_confs": sliding_window,  # 新增
+        "group_confs": sliding_window,
         "min_conf": min(sliding_window) if sliding_window else 0,
         "extracted_answer": extracted_answer,
         "is_correct": is_correct,
     }
+
 
 def process_batch_results_offline(batch_outputs, ground_truth, window_size):
     question_outputs = batch_outputs[0].outputs
