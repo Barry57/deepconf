@@ -15,15 +15,14 @@ WARMUP_TRACES = 16
 CONFIDENCE_PERCENTILE = 90
 WINDOW_SIZE = 5
 
-def make_token_conf_pairs(tokenizer, text, confs):
-    """将 token 与置信度配对为 'token:score'，避免乱码"""
-    if not text or not confs:
+def make_token_conf_pairs(tokens, confs):
+    """将已知的 token 列表与置信度配对为 'token:score'"""
+    if not tokens or not confs:
         return ""
-    token_ids = tokenizer.encode(text, add_special_tokens=False)
-    n = min(len(token_ids), len(confs))
+    n = min(len(tokens), len(confs))
     pairs = []
     for i in range(n):
-        token_str = tokenizer.decode([token_ids[i]]).strip()
+        token_str = tokens[i].strip()
         pairs.append(f"{token_str}:{confs[i]:.4f}")
     return ",".join(pairs)
 
@@ -105,16 +104,17 @@ def main(input_excel):
         # token:score 配对
         per_trace_pairs = []
         for trace in traces:
-            pairs_str = make_token_conf_pairs(tokenizer, trace.get('text', ''), trace.get('confs', []))
+            pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
             per_trace_pairs.append(pairs_str)
         token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
 
         # group_conf
         group_conf_all.append(
             " ; ".join([
-                f"{token_str}:{score:.4f}"
-                for token_str, score in trace.get('group_conf_tokens', [])
-            ]))
+                " ".join([f"{token_str}:{score:.4f}" for token_str, score in trace.get('group_conf_tokens', [])])
+                for trace in result['traces']
+            ])
+        )
 
         if (idx + 1) % 5 == 0:
             print(f"Processed {idx+1}/{len(df)} rows...")
