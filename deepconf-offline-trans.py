@@ -87,7 +87,7 @@ def main(input_excel):
         final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
         translations.append(final_translation)
         per_trace_pairs = []
-        for trace in traces:
+        for trace in result['traces']:
             pairs_str = make_token_conf_pairs(tokenizer, trace.get('text', ''), trace.get('confs', []))
             per_trace_pairs.append(pairs_str)
         token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
