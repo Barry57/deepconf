@@ -209,12 +209,12 @@ def process_output_offline(output, ground_truth, window_size, tokenizer=None):
         "is_correct": is_correct,
     }
 
-def process_batch_results_offline(batch_outputs, ground_truth, window_size):
+def process_batch_results_offline(batch_outputs, ground_truth, window_size, tokenizer):
     question_outputs = batch_outputs[0].outputs
     traces = []
     total_tokens = 0
     for output in question_outputs:
-        trace_data = process_output_offline(output, ground_truth, window_size)
+        trace_data = process_output_offline(output, ground_truth, window_size, tokenizer)
         traces.append(trace_data)
         total_tokens += trace_data["num_tokens"]
     return {
