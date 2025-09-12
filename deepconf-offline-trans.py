@@ -14,6 +14,18 @@ MAX_TOKENS = 512
 TOTAL_BUDGET = 256 # 生成路径数
 WINDOW_SIZE = 5
 
+def make_token_conf_pairs(tokenizer, text, confs):
+    """将 token 与置信度配对为 'token:score'，避免乱码"""
+    if not text or not confs:
+        return ""
+    token_ids = tokenizer.encode(text, add_special_tokens=False)
+    n = min(len(token_ids), len(confs))
+    pairs = []
+    for i in range(n):
+        token_str = tokenizer.decode([token_ids[i]]).strip()
+        pairs.append(f"{token_str}:{confs[i]:.4f}")
+    return ",".join(pairs)
+
 def main(input_excel):
     os.makedirs("outputs", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -73,17 +85,12 @@ def main(input_excel):
                 avg_conf = sum(trace['group_confs']) / len(trace['group_confs']) if trace['group_confs'] else 1.0
                 voting_weights.append(avg_conf)
         final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
-
         translations.append(final_translation)
-        token_confidences_all.append(
-            "; ".join([
-                ",".join([
-                    f"{token}/{conf:.4f}"
-                    for token, conf in zip(t['tokens'], t['confs'])
-                ])
-                for t in result['traces']
-            ])
-        )
+        per_trace_pairs = []
+        for trace in traces:
+            pairs_str = make_token_conf_pairs(tokenizer, trace.get('text', ''), trace.get('confs', []))
+            per_trace_pairs.append(pairs_str)
+        token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
         group_conf_all.append(
             "; ".join([",".join([f"{gc:.4f}" for gc in t['group_confs']]) for t in result['traces']])
         )
@@ -93,7 +100,7 @@ def main(input_excel):
 
     # 5. 保存结果
     df['translation'] = translations
-    df['token_confidences'] = token_confidences_all
+    df['token_confidences'] = token_conf_pairs_all
     df['group_conf'] = group_conf_all
     df.to_excel(output_excel, index=False)
     print(f"Results saved to {output_excel}")
