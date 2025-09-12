@@ -92,8 +92,10 @@ def main(input_excel):
             per_trace_pairs.append(pairs_str)
         token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
         group_conf_all.append(
-            "; ".join([",".join([f"{gc:.4f}" for gc in t['group_confs']]) for t in result['traces']])
-        )
+            " ; ".join([
+                f"{token_str}:{score:.4f}"
+                for token_str, score in t.get('group_conf_tokens', [])
+            ]))
 
         if (idx + 1) % 5 == 0:
             print(f"Processed {idx+1}/{len(df)} rows...")
