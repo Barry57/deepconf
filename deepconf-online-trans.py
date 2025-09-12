@@ -111,8 +111,10 @@ def main(input_excel):
 
         # group_conf
         group_conf_all.append(
-            "; ".join([",".join([f"{gc:.4f}" for gc in trace['group_confs']]) for trace in traces])
-        )
+            " ; ".join([
+                f"{token_str}:{score:.4f}"
+                for token_str, score in trace.get('group_conf_tokens', [])
+            ]))
 
         if (idx + 1) % 5 == 0:
             print(f"Processed {idx+1}/{len(df)} rows...")
