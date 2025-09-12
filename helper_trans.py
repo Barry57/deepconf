@@ -110,8 +110,11 @@ def process_output(output, ground_truth, window_size, tokenizer=None):
     text = output.text
     token_ids = output.token_ids
     logprobs = output.logprobs
-    if hasattr(output, "tokens"):
+    if hasattr(output, "tokens") and output.tokens:
         tokens = output.tokens
+    elif tokenizer and text:
+        token_ids = tokenizer.encode(text, add_special_tokens=False)
+        tokens = [tokenizer.decode([tid]).strip() for tid in token_ids]
     elif tokenizer and token_ids:
         tokens = tokenizer.convert_ids_to_tokens(token_ids)
     else:
@@ -133,7 +136,7 @@ def process_output(output, ground_truth, window_size, tokenizer=None):
         "num_tokens": len(token_ids) if token_ids else 0,
         "confs": confs,  # 逐 token 置信度
         "group_conf_tokens": group_conf_tokens,  # [(token串, 分数), ...]
-        "min_conf": min([score for _, score in group_conf_tokens]) if group_conf_tokens else 0,
+        "min_conf": min((score for _, score in group_conf_tokens), default=0),
         "extracted_answer": extracted_answer,
         "is_correct": is_correct,
     }
