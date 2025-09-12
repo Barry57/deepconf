@@ -172,7 +172,6 @@ def process_output_offline(output, ground_truth, window_size, tokenizer=None):
         "stop_reason": output.finish_reason,
         "text": text,
         "token_ids": token_ids,
-        "tokens": tokens,
         "num_tokens": len(token_ids) if token_ids else 0,
         "confs": confs,
         "group_confs": sliding_window,
