@@ -76,7 +76,13 @@ def main(input_excel):
 
         translations.append(final_translation)
         token_confidences_all.append(
-            "; ".join([",".join([f"{c:.4f}" for c in t['confs']]) for t in result['traces']])
+            "; ".join([
+                ",".join([
+                    f"{token}/{conf:.4f}"
+                    for token, conf in zip(t['tokens'], t['confs'])
+                ])
+                for t in result['traces']
+            ])
         )
         group_conf_all.append(
             "; ".join([",".join([f"{gc:.4f}" for gc in t['group_confs']]) for t in result['traces']])
