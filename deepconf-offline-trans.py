@@ -82,7 +82,8 @@ def main(input_excel):
         for trace in result['traces']:
             if trace['text']:
                 voting_answers.append(trace['text'])
-                avg_conf = sum(trace['group_confs']) / len(trace['group_confs']) if trace['group_confs'] else 1.0
+                scores = [score for _, score in trace.get('group_conf_tokens', [])]
+                avg_conf = sum(scores) / len(scores) if scores else 1.0
                 voting_weights.append(avg_conf)
         final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
         translations.append(final_translation)
