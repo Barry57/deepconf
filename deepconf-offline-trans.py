@@ -74,7 +74,7 @@ def main(input_excel):
         )
 
         outputs = llm.generate([prompt], sampling_params)
-        result = process_batch_results_offline(outputs, ground_truth="", window_size=WINDOW_SIZE)
+        result = process_batch_results_offline(outputs, ground_truth="", window_size=WINDOW_SIZE, tokenizer=tokenizer)
 
         # 投票
         voting_answers = []
