@@ -56,7 +56,7 @@ def main(input_excel):
     )
 
     translations = []
-    token_confidences_all = []
+    token_conf_pairs_all = []
     group_conf_all = []
 
     # 4. 循环处理每一行
