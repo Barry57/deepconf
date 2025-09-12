@@ -180,6 +180,19 @@ def process_output_offline(output, ground_truth, window_size, tokenizer=None):
         "is_correct": is_correct,
     }
 
+def compute_least_grouped_with_tokens(tokens, confs, group_size):
+    """返回 [(窗口token字符串, 窗口平均分), ...]"""
+    if not confs or not tokens:
+        return []
+    if len(confs) < group_size:
+        return [("".join(tokens), sum(confs) / len(confs))]
+    results = []
+    for i in range(len(confs) - group_size + 1):
+        window_tokens = tokens[i:i + group_size]
+        window_confs = confs[i:i + group_size]
+        avg_conf = sum(window_confs) / len(window_confs)
+        results.append(("".join(window_tokens), avg_conf))
+    return results
 
 def process_batch_results_offline(batch_outputs, ground_truth, window_size):
     question_outputs = batch_outputs[0].outputs
