@@ -73,7 +73,7 @@ def main(input_excel):
             logprobs=20,
         )
         warmup_outputs = llm.generate([prompt], warmup_params)
-        warmup_result = process_batch_results(warmup_outputs, ground_truth="", window_size=WINDOW_SIZE)
+        warmup_result = process_batch_results(warmup_outputs, ground_truth="", window_size=WINDOW_SIZE, tokenizer=tokenizer)
         conf_bar = float(np.percentile(warmup_result['min_confs'], CONFIDENCE_PERCENTILE))
 
         # final 阶段
@@ -86,7 +86,7 @@ def main(input_excel):
             extra_args={'enable_conf': True, 'window_size': WINDOW_SIZE, 'threshold': conf_bar}
         )
         final_outputs = llm.generate([prompt], final_params)
-        final_result = process_batch_results(final_outputs, ground_truth="", window_size=WINDOW_SIZE)
+        final_result = process_batch_results(final_outputs, ground_truth="", window_size=WINDOW_SIZE, tokenizer=tokenizer)
 
         # 合并 traces
         traces = warmup_result['traces'] + final_result['traces']
