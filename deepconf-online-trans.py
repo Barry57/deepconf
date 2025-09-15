@@ -112,7 +112,7 @@ def main(input_excel):
         group_conf_all.append(
             " ; ".join([
                 " ".join([f"{token_str}:{score:.4f}" for token_str, score in trace.get('group_conf_tokens', [])])
-                for trace in result['traces']
+                for trace in traces
             ])
         )
 
