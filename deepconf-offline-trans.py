@@ -7,12 +7,13 @@ from datetime import datetime
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from helper_trans import process_batch_results_offline, weighted_majority_vote
+from torchmetrics.text import TranslationEditRate
 
 # ====== 配置（offline 参数） ======
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
-TOTAL_BUDGET = 1 # 生成路径数
-WINDOW_SIZE = 100
+TOTAL_BUDGET = 200 # 生成路径数
+WINDOW_SIZE = 5
 
 def make_token_conf_pairs(tokens, confs):
     """将已知的 token 列表与置信度配对为 'token:score'"""
@@ -38,15 +39,9 @@ def main(input_excel):
         raise ValueError("Excel 文件中必须包含 'source' 列")
     if 'Qwen-TM32-Translation-TER' not in df.columns:
         raise ValueError("Excel 文件中必须包含 'Qwen-TM32-Translation-TER' 列")
-    
-    '''
-    # 2. 分层抽样：最低 TER 10 行 + 其他随机 10 行
-    lowest_10 = df.nsmallest(10, 'Qwen-TM32-Translation-TER')
-    remaining = df.drop(lowest_10.index)
-    random_10 = remaining.sample(n=min(10, len(remaining)), random_state=42)
-    df = pd.concat([lowest_10, random_10]).reset_index(drop=True)
-    '''
-    
+    if 'target' not in df.columns:
+        raise ValueError("Excel 文件中必须包含 'target' 列，作为参考翻译")
+
     # 3. 初始化 tokenizer & LLM
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
     llm = LLM(
@@ -88,6 +83,7 @@ def main(input_excel):
                 voting_weights.append(avg_conf)
         final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
         translations.append(final_translation)
+
         per_trace_pairs = []
         for trace in result['traces']:
             pairs_str = make_token_conf_pairs(trace.get('tokens', ''), trace.get('confs', []))
@@ -106,6 +102,22 @@ def main(input_excel):
     df['translation'] = translations
     df['token_confidences'] = token_conf_pairs_all
     df['group_conf'] = group_conf_all
+
+    # === 新增 TER 计算 ===
+    Ter_caculate = TranslationEditRate(asian_support=True, normalize=True)
+    ter_scores = []
+    for idx, row in df.iterrows():
+        target_text = str(row['target'])
+        pred_text = str(row['translation'])
+        try:
+            score = 1 - Ter_caculate([pred_text], [[target_text]])  # 注意 target 是二维 list
+            ter_scores.append(float(score))
+        except Exception as e:
+            print(f"Row {idx} TER计算出错: {e}")
+            ter_scores.append(None)
+    df['TER_trans'] = ter_scores
+    # ====================
+
     df.to_excel(output_excel, index=False)
     print(f"Results saved to {output_excel}")
     print(f"Total execution time: {time.time() - total_start_time:.2f}s")
