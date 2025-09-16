@@ -38,8 +38,6 @@ def main(input_excel):
     df = pd.read_excel(input_excel)
     if 'source' not in df.columns:
         raise ValueError("Excel 文件中必须包含 'source' 列")
-    if 'Qwen-TM32-Translation-TER' not in df.columns:
-        raise ValueError("Excel 文件中必须包含 'Qwen-TM32-Translation-TER' 列")
     if 'target' not in df.columns:
         raise ValueError("Excel 文件中必须包含 'target' 列，作为参考翻译")
 
