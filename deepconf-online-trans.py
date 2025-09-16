@@ -43,11 +43,13 @@ def main(input_excel):
     if 'target' not in df.columns:
         raise ValueError("Excel 文件中必须包含 'target' 列，作为参考翻译")
 
+    '''
     # 2. 分层抽样：最低 TER 10 行 + 其他随机 10 行
     lowest_10 = df.nsmallest(10, 'Qwen-TM32-Translation-TER')
     remaining = df.drop(lowest_10.index)
     random_10 = remaining.sample(n=min(10, len(remaining)), random_state=42)
     df = pd.concat([lowest_10, random_10]).reset_index(drop=True)
+    '''
 
     # 3. 初始化 tokenizer & LLM
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
