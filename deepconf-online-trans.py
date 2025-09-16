@@ -7,6 +7,7 @@ from datetime import datetime
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from helper_trans import process_batch_results, weighted_majority_vote
+from torchmetrics.text import TranslationEditRate
 
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
@@ -39,6 +40,8 @@ def main(input_excel):
         raise ValueError("Excel 文件中必须包含 'source' 列")
     if 'Qwen-TM32-Translation-TER' not in df.columns:
         raise ValueError("Excel 文件中必须包含 'Qwen-TM32-Translation-TER' 列")
+    if 'target' not in df.columns:
+        raise ValueError("Excel 文件中必须包含 'target' 列，作为参考翻译")
 
     # 2. 分层抽样：最低 TER 10 行 + 其他随机 10 行
     lowest_10 = df.nsmallest(10, 'Qwen-TM32-Translation-TER')
@@ -123,12 +126,28 @@ def main(input_excel):
     df['translation'] = translations
     df['token_conf_pairs'] = token_conf_pairs_all
     df['group_conf'] = group_conf_all
+
+    # === 新增 TER 计算 ===
+    Ter_caculate = TranslationEditRate(asian_support=True, normalize=True)
+    ter_scores = []
+    for idx, row in df.iterrows():
+        target_text = str(row['target'])
+        pred_text = str(row['translation'])
+        try:
+            score = 1 - Ter_caculate([pred_text], [[target_text]])  # target 必须是二维 list
+            ter_scores.append(float(score))
+        except Exception as e:
+            print(f"Row {idx} TER计算出错: {e}")
+            ter_scores.append(None)
+    df['TER_trans'] = ter_scores
+    # ====================
+
     df.to_excel(output_excel, index=False)
     print(f"Results saved to {output_excel}")
     print(f"Total execution time: {time.time() - total_start_time:.2f}s")
 
 def parse_args():
-    parser = argparse.ArgumentParser(description='Online translation with warmup threshold, sampling, and token-score matching')
+    parser = argparse.ArgumentParser(description='Online translation with warmup threshold, sampling, token-score matching, and TER evaluation')
     parser.add_argument('--input_excel', type=str, required=True)
     return parser.parse_args()
 
