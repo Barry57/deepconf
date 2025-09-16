@@ -12,7 +12,7 @@ from helper_trans import process_batch_results_offline, weighted_majority_vote
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
 TOTAL_BUDGET = 1 # 生成路径数
-WINDOW_SIZE = 3
+WINDOW_SIZE = 100
 
 def make_token_conf_pairs(tokens, confs):
     """将已知的 token 列表与置信度配对为 'token:score'"""
