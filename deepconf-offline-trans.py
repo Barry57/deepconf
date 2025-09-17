@@ -37,9 +37,13 @@ def extract_lowest_chinese_tokens(pairs_str, top_k=3):
     # 多个 trace 用 ; 分隔
     for part in pairs_str.split(";"):
         for item in part.split(","):
+            item = item.strip()
             if ":" not in item:
                 continue
-            token, score_str = item.split(":")
+            parts = item.rsplit(":", 1)  # 从右边切一次
+            if len(parts) != 2:
+                continue
+            token, score_str = parts
             token = token.strip()
             try:
                 score = float(score_str)
@@ -55,6 +59,7 @@ def extract_lowest_chinese_tokens(pairs_str, top_k=3):
     lowest = token_score_list[:top_k]
     return ",".join([f"{t}:{s:.4f}" for t, s in lowest])
 
+
 def main(input_excel):
     os.makedirs("outputs", exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -66,7 +71,13 @@ def main(input_excel):
     df = pd.read_excel(input_excel)
     if 'source' not in df.columns:
         raise ValueError("Excel 文件中必须包含 'source' 列")
-
+    
+    # 2. 分层抽样：最低 TER 10 行 + 其他随机 10 行
+    lowest_10 = df.nsmallest(10, 'Qwen-TM32-Translation-TER')
+    remaining = df.drop(lowest_10.index)
+    random_10 = remaining.sample(n=min(10, len(remaining)), random_state=42)
+    df = pd.concat([lowest_10, random_10]).reset_index(drop=True)
+    
     # 3. 初始化 tokenizer & LLM
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
     llm = LLM(
