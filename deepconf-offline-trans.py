@@ -12,8 +12,8 @@ from torchmetrics.text import TranslationEditRate
 # ====== 配置（offline 参数） ======
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
-TOTAL_BUDGET = 200 # 生成路径数
-WINDOW_SIZE = 5
+TOTAL_BUDGET = 10 # 生成路径数
+WINDOW_SIZE = 3
 
 def make_token_conf_pairs(tokens, confs):
     """将已知的 token 列表与置信度配对为 'token:score'"""
