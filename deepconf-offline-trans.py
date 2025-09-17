@@ -3,6 +3,7 @@ import time
 import argparse
 import pandas as pd
 import numpy as np
+import re
 from datetime import datetime
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
@@ -12,7 +13,7 @@ from torchmetrics.text import TranslationEditRate
 # ====== 配置（offline 参数） ======
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
-TOTAL_BUDGET = 1 # 生成路径数
+TOTAL_BUDGET = 1  # 生成路径数
 WINDOW_SIZE = 3
 
 def make_token_conf_pairs(tokens, confs):
@@ -25,6 +26,34 @@ def make_token_conf_pairs(tokens, confs):
         token_str = tokens[i].strip()
         pairs.append(f"{token_str}:{confs[i]:.4f}")
     return ",".join(pairs)
+
+def extract_lowest_chinese_tokens(pairs_str, top_k=3):
+    """
+    从 token:score 字符串中过滤出中文 token，返回分数最低的 top_k 个。
+    """
+    if not pairs_str:
+        return ""
+    token_score_list = []
+    # 多个 trace 用 ; 分隔
+    for part in pairs_str.split(";"):
+        for item in part.split(","):
+            if ":" not in item:
+                continue
+            token, score_str = item.split(":")
+            token = token.strip()
+            try:
+                score = float(score_str)
+            except:
+                continue
+            # 只保留中文字符
+            if re.search(r'[\u4e00-\u9fff]', token):
+                token_score_list.append((token, score))
+    if not token_score_list:
+        return ""
+    # 按分数升序排序，取前 top_k
+    token_score_list.sort(key=lambda x: x[1])
+    lowest = token_score_list[:top_k]
+    return ",".join([f"{t}:{s:.4f}" for t, s in lowest])
 
 def main(input_excel):
     os.makedirs("outputs", exist_ok=True)
@@ -98,6 +127,9 @@ def main(input_excel):
     df['translation'] = translations
     df['token_confidences'] = token_conf_pairs_all
     df['group_conf'] = group_conf_all
+
+    # === 新增最低3个中文token列 ===
+    df['lowest3_chinese_tokens'] = df['token_confidences'].apply(lambda x: extract_lowest_chinese_tokens(x, top_k=3))
 
     # === 新增 TER 计算 ===
     if "target" in df.columns:
