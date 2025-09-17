@@ -37,8 +37,6 @@ def main(input_excel):
     df = pd.read_excel(input_excel)
     if 'source' not in df.columns:
         raise ValueError("Excel 文件中必须包含 'source' 列")
-    if 'target' not in df.columns:
-        raise ValueError("Excel 文件中必须包含 'target' 列，作为参考翻译")
 
     # 3. 初始化 tokenizer & LLM
     tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
@@ -102,18 +100,19 @@ def main(input_excel):
     df['group_conf'] = group_conf_all
 
     # === 新增 TER 计算 ===
-    Ter_caculate = TranslationEditRate(asian_support=True, normalize=True)
-    ter_scores = []
-    for idx, row in df.iterrows():
-        target_text = str(row['target'])
-        pred_text = str(row['translation'])
-        try:
-            score = 1 - Ter_caculate([pred_text], [[target_text]])  # 注意 target 是二维 list
-            ter_scores.append(float(score))
-        except Exception as e:
-            print(f"Row {idx} TER计算出错: {e}")
-            ter_scores.append(None)
-    df['TER_trans'] = ter_scores
+    if "target" in df.columns:
+        Ter_caculate = TranslationEditRate(asian_support=True, normalize=True)
+        ter_scores = []
+        for idx, row in df.iterrows():
+            target_text = str(row['target'])
+            pred_text = str(row['translation'])
+            try:
+                score = 1 - Ter_caculate([pred_text], [[target_text]])  # 注意 target 是二维 list
+                ter_scores.append(float(score))
+            except Exception as e:
+                print(f"Row {idx} TER计算出错: {e}")
+                ter_scores.append(None)
+        df['TER_trans'] = ter_scores
     # ====================
 
     df.to_excel(output_excel, index=False)
