@@ -73,7 +73,7 @@ def main(input_excel):
         raise ValueError("Excel 文件中必须包含 'source' 列")
     
     # 2. 分层抽样：最低 TER 10 行 + 其他随机 10 行
-    lowest_10 = df.nsmallest(10, 'Qwen-TM32-Translation-TER')
+    lowest_10 = df.nsmallest(10, 'Qwen3-1.7B-TM32-Ter')
     remaining = df.drop(lowest_10.index)
     random_10 = remaining.sample(n=min(10, len(remaining)), random_state=42)
     df = pd.concat([lowest_10, random_10]).reset_index(drop=True)
