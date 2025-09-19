@@ -28,13 +28,9 @@ def make_token_conf_pairs(tokens, confs):
     return ",".join(pairs)
 
 def extract_lowest_chinese_tokens(pairs_str, top_k=3):
-    """
-    从 token:score 字符串中过滤出中文 token，返回分数最低的 top_k 个。
-    """
     if not pairs_str:
         return ""
     token_score_list = []
-    # 多个 trace 用 ; 分隔
     for part in pairs_str.split(";"):
         for item in part.split(","):
             item = item.strip()
@@ -46,12 +42,12 @@ def extract_lowest_chinese_tokens(pairs_str, top_k=3):
             token, score_str = parts
             token = token.strip()
             try:
-                score = float(score_str)
+                token_score = float(score_str)
             except:
                 continue
             # 只保留中文字符
             if re.search(r'[\u4e00-\u9fff]', token):
-                token_score_list.append((token, score))
+                token_score_list.append((token, token_score))
     if not token_score_list:
         return ""
     # 按分数升序排序，取前 top_k
@@ -114,7 +110,7 @@ def main(input_excel):
         for trace in result['traces']:
             if trace['text']:
                 voting_answers.append(trace['text'])
-                scores = [score for _, score in trace.get('group_conf_tokens', [])]
+                scores = [score_ for _, score_ in trace.get('group_conf_tokens', [])]
                 avg_conf = sum(scores) / len(scores) if scores else 1.0
                 voting_weights.append(avg_conf)
         final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
@@ -127,7 +123,7 @@ def main(input_excel):
         token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
         group_conf_all.append(
             " ; ".join([
-                " ".join([f"{token_str}:{score:.4f}" for token_str, score in trace.get('group_conf_tokens', [])])
+                " ".join([f"{token_str}:{group_score:.4f}" for token_str, group_score in trace.get('group_conf_tokens', [])])
                 for trace in result['traces']
             ])
         )
@@ -150,8 +146,8 @@ def main(input_excel):
             target_text = str(row['target'])
             pred_text = str(row['translation'])
             try:
-                score = 1 - Ter_caculate([pred_text], [[target_text]])  # 注意 target 是二维 list
-                ter_scores.append(float(score))
+                TER_score = 1 - Ter_caculate([pred_text], [[target_text]])  # 注意 target 是二维 list
+                ter_scores.append(float(TER_score))
             except Exception as e:
                 print(f"Row {idx} TER计算出错: {e}")
                 ter_scores.append(None)
