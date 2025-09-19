@@ -9,15 +9,15 @@ from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
 from helper_trans import process_batch_results_offline, weighted_majority_vote
 from torchmetrics.text import TranslationEditRate
+from bert_score import score
 
-# ====== 配置（offline 参数） ======
+
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
 TOTAL_BUDGET = 1  # 生成路径数
 WINDOW_SIZE = 3
 
 def make_token_conf_pairs(tokens, confs):
-    """将已知的 token 列表与置信度配对为 'token:score'"""
     if not tokens or not confs:
         return ""
     n = min(len(tokens), len(confs))
@@ -157,6 +157,23 @@ def main(input_excel):
                 ter_scores.append(None)
         df['TER_trans'] = ter_scores
     # ====================
+    if "target" in df.columns and "translation" in df.columns:
+        refs = df["target"].astype(str).tolist()
+        cands = df["translation"].astype(str).tolist()
+        try:
+            P, R, F1 = score(
+                cands, refs,
+                lang="zh",
+                model_type="bert-base-chinese",  # 或者更强的 "hfl/chinese-roberta-wwm-ext"
+                rescale_with_baseline=True, 
+                batch_size=64
+            )
+            # 写回 DataFrame
+            df["BERTScore_P"] = P.tolist()
+            df["BERTScore_R"] = R.tolist()
+            df["BERTScore_F1"] = F1.tolist()
+        except Exception as e:
+            print(f"BERTScore 计算出错: {e}")
 
     df.to_excel(output_excel, index=False)
     print(f"Results saved to {output_excel}")
