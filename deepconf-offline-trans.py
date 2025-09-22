@@ -14,8 +14,8 @@ from bert_score import score
 
 MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
 MAX_TOKENS = 512
-TOTAL_BUDGET = 1  # 生成路径数
-WINDOW_SIZE = 3
+TOTAL_BUDGET = 200  # 生成路径数
+WINDOW_SIZE = 5
 
 def make_token_conf_pairs(tokens, confs):
     if not tokens or not confs:
