@@ -111,8 +111,8 @@ def main(input_excel):
             if trace['text']:
                 voting_answers.append(trace['text'])
                 scores = [score_ for _, score_ in trace.get('group_conf_tokens', [])]
-                avg_conf = sum(scores) / len(scores) if scores else 1.0
-                voting_weights.append(avg_conf)
+                min_conf = min(scores) if scores else 0
+                voting_weights.append(min_conf)
         final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
         translations.append(final_translation)
 
