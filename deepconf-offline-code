@@ -1,134 +1,436 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 """
-HumanEval workflow（含置信度）
-1. 下载官方题库
-2. vLLM 生成 200 条路径
-3. dump token 级置信度
-4. 生成官方评测格式
-5. 打印 Pass@k
+功能
+- 若未提供 dataset (--dataset)，自动下载 HumanEval.jsonl.gz 并解压
+- 用 vLLM (vllm.LLM) 生成多条 trace（保存逐 token logprob）
+- 对每条 trace 按 token 长度做 sliding window (默认 window_size=1024) 计算每组均值，取最小组均值作为代表置信度
+- 去重候选并用 human-eval.check_correctness 做执行检测（缓存结果），回写每条 trace 的 is_correct
+- 把每条 trace 的 min_group_mean 按 is_correct 累加到 0/1 两组，组分数高者为题目投票结果
+- 每条 trace 一行输出 JSONL（并提供 CSV、pickle 汇总）
+- CLI 参数控制生成/窗口/并发/输出等
+
+示例：
+  python run_voting_pipeline.py --model Qwen/Qwen3-Coder-30B-A3B-Instruct --n_samples 200 --out_dir outputs --qid 0 --rid run1
+
+注意
+- 需要安装依赖： vllm, transformers, human-eval, numpy, pandas (可选), tqdm (可选)
+- 在无 human-eval 环境下脚本可运行但执行检测会被跳过（is_correct 始终为 0）
 """
-import os, sys, json, time, argparse, numpy as np
-import urllib.request
-from vllm import LLM, SamplingParams
-from transformers import AutoTokenizer
 
-HUMAN_EVAL_URL = "https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz"
-HUMAN_EVAL_FILE = "HumanEval.jsonl"
+import os
+import sys
+import time
+import json
+import gzip
+import shutil
+import argparse
+import pickle
+from datetime import datetime
+from collections import defaultdict, Counter
 
+import numpy as np
 
-# ---------- 1. 自动下载题库 ----------
-def maybe_download():
-    if os.path.exists(HUMAN_EVAL_FILE):
-        return
-    print("↓ 下载 HumanEval 题库...")
-    urllib.request.urlretrieve(HUMAN_EVAL_URL, "HumanEval.jsonl.gz")
-    os.system("gunzip -c HumanEval.jsonl.gz > HumanEval.jsonl")
-    os.remove("HumanEval.jsonl.gz")
+# vLLM/transformers/human-eval 可能在某些环境不可用，可先安装依赖
+try:
+    from transformers import AutoTokenizer
+except Exception:
+    AutoTokenizer = None
 
+try:
+    from vllm import LLM, SamplingParams
+except Exception:
+    LLM = None
+    SamplingParams = None
 
-# ---------- 2. 生成 ----------
-def generate_main(model_path, n_samples=200, temperature=0.6, max_tokens=512):
-    maybe_download()
-
-    print("加载 tokenizer & vLLM...")
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
-    llm = LLM(model=model_path,
-              tensor_parallel_size=1,
-              enable_prefix_caching=True,
-              trust_remote_code=True)
-
-    sampling_params = SamplingParams(
-        n=n_samples,
-        temperature=temperature,
-        top_p=0.95,
-        max_tokens=max_tokens,
-        logprobs=20,               # 保留置信度
-    )
-
-    samples = []
-    for line in open(HUMAN_EVAL_FILE):
-        prob = json.loads(line)
-        prompt = prob["prompt"]          # 签名+docstring
-        outputs = llm.generate([prompt], sampling_params)
-
-        traces = []
-        for out in outputs[0].outputs:
-            tokens = [o.token for o in out.logprobs]
-            scores = [o.logprob for o in out.logprobs]
-            traces.append({
-                "text": out.text,
-                "token_scores": list(zip(tokens, scores))
-            })
-
-        # 选平均 logprob 最高的一条作为最终答案
-        best_text = max(traces, key=lambda x: np.mean([s for _, s in x["token_scores"]]))["text"]
-        samples.append({
-            "task_id": prob["task_id"],
-            "completion": best_text,      # 官方评测只认这个
-            "all_traces": traces          # 置信度留底
-        })
-
-        if len(samples) % 20 == 0:
-            print(f"✅ 完成 {len(samples)}/164")
-
-    return samples
-
-
-# ---------- 3. 官方评测 ----------
-def evaluate(samples, k_list=[1, 10, 100]):
-    # 安装评测器（仅首次）
-    os.system("pip -q install human-eval")
+try:
     from human_eval.execution import check_correctness
-    from human_eval.data import HUMAN_EVAL, read_problems
+    from human_eval.data import read_problems
+except Exception:
+    check_correctness = None
+    read_problems = None
 
-    problems = read_problems()
-    result = {f"pass@{k}": [] for k in k_list}
+# ---------------------------
+# Download helpers (HumanEval)
+# ---------------------------
+HUMAN_EVAL_DEFAULT_URL = "https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz"
 
-    for s in samples:
-        prob = problems[s["task_id"]]
-        completion = s["completion"]
-        # 拼装 & 执行
-        res = check_correctness(prob, completion, timeout=3.0)
-        result["pass@1"].append(1 if res["passed"] else 0)
+def _download_with_progress(url, out_path, retries=3, backoff=2.0):
+    import urllib.request
+    attempt = 0
+    while attempt < retries:
+        try:
+            with urllib.request.urlopen(url, timeout=60) as resp:
+                total = resp.getheader('Content-Length')
+                total = int(total) if total and total.isdigit() else None
+                with open(out_path, 'wb') as f:
+                    downloaded = 0
+                    chunk_size = 8192
+                    start = time.time()
+                    while True:
+                        chunk = resp.read(chunk_size)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if total:
+                            pct = downloaded / total * 100
+                            elapsed = time.time() - start
+                            speed = downloaded / 1024 / (elapsed + 1e-6)
+                            sys.stdout.write(f"\rDownloading {os.path.basename(out_path)}: {pct:5.1f}% {downloaded/1024:.1f}KB @ {speed:.1f}KB/s")
+                        else:
+                            sys.stdout.write(f"\rDownloading {os.path.basename(out_path)}: {downloaded/1024:.1f}KB")
+                        sys.stdout.flush()
+                sys.stdout.write("\n")
+            return True
+        except Exception as e:
+            attempt += 1
+            if attempt >= retries:
+                raise
+            time.sleep(backoff * attempt)
+    return False
 
-    # 计算 Pass@k（简化版，假设 n_samples>=max(k)）
-    def estimator(pass_flags, n, k):
-        """pass@k 无偏估计"""
-        import math
-        s = sum(pass_flags)
-        return 1.0 - math.comb(n - s, k) / math.comb(n, k)
+def _gunzip(src_gz, dest_path):
+    with gzip.open(src_gz, 'rb') as f_in:
+        with open(dest_path, 'wb') as f_out:
+            shutil.copyfileobj(f_in, f_out)
 
-    n = len(samples[0]["all_traces"])
-    return {f"pass@{k}": estimator(result["pass@1"], n, k) for k in k_list}
+def maybe_download_humaneval(target_dir=".", filename="HumanEval.jsonl", url=None, force=False):
+    url = url or HUMAN_EVAL_DEFAULT_URL
+    os.makedirs(target_dir, exist_ok=True)
+    jsonl_path = os.path.join(target_dir, filename)
+    gz_path = jsonl_path + ".gz"
 
+    if os.path.exists(jsonl_path) and not force:
+        print(f"Found existing {jsonl_path}, skip download.")
+        return os.path.abspath(jsonl_path)
 
-# ---------- 4. main ----------
+    print(f"Downloading HumanEval dataset to {target_dir} ...")
+    try:
+        _download_with_progress(url, gz_path)
+    except Exception as e:
+        if os.path.exists(gz_path):
+            os.remove(gz_path)
+        raise RuntimeError(f"Download failed: {e}")
+
+    try:
+        print("Decompressing...")
+        _gunzip(gz_path, jsonl_path)
+    except Exception as e:
+        if os.path.exists(jsonl_path):
+            os.remove(jsonl_path)
+        raise RuntimeError(f"Decompression failed: {e}")
+    finally:
+        try:
+            os.remove(gz_path)
+        except Exception:
+            pass
+
+    print(f"Saved HumanEval jsonl to {jsonl_path}")
+    return os.path.abspath(jsonl_path)
+
+# ---------------------------
+# I/O helpers
+# ---------------------------
+def stream_jsonl(filename):
+    if filename.endswith(".gz"):
+        with gzip.open(filename, "rt", encoding="utf-8") as fp:
+            for line in fp:
+                if line.strip():
+                    yield json.loads(line)
+    else:
+        with open(filename, "r", encoding="utf-8") as fp:
+            for line in fp:
+                if line.strip():
+                    yield json.loads(line)
+
+def write_jsonl(path, rows):
+    with open(path, "w", encoding="utf-8") as f:
+        for r in rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+def write_csv(path, rows):
+    import csv
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f)
+        header = ["task_id","min_group_mean","group_means_json","is_correct","voted_label","extracted_answer"]
+        writer.writerow(header)
+        for r in rows:
+            writer.writerow([r.get("task_id"),
+                             r.get("min_group_mean"),
+                             json.dumps(r.get("group_means", []), ensure_ascii=False),
+                             r.get("is_correct"),
+                             r.get("voted_label"),
+                             r.get("extracted_answer")])
+
+# ---------------------------
+# token/logprob helpers
+# ---------------------------
+def avg_logprobs_from_token_scores(token_scores):
+    vals = []
+    for item in token_scores or []:
+        if isinstance(item, (list, tuple)) and len(item) >= 2:
+            try:
+                vals.append(float(item[1]))
+            except Exception:
+                vals.append(0.0)
+        else:
+            try:
+                vals.append(float(item))
+            except Exception:
+                vals.append(0.0)
+    return vals
+
+def sliding_group_means(token_logprobs, window_size=1024, stride=None):
+    if stride is None:
+        stride = window_size
+    if not token_logprobs:
+        return []
+    n = len(token_logprobs)
+    if n <= window_size:
+        return [float(np.mean(token_logprobs))]
+    groups = []
+    i = 0
+    while i < n:
+        j = min(i + window_size, n)
+        groups.append(float(np.mean(token_logprobs[i:j])))
+        i += stride
+    return groups
+
+# ---------------------------
+# voting / execution logic
+# ---------------------------
+def vote_by_min_group_and_execution(task_id, all_traces, problems_dict=None,
+                                    window_size=1024, stride=None,
+                                    exec_timeout=3.0, dedup_exec=True, pass_cache=None):
+    if pass_cache is None:
+        pass_cache = {}
+
+    # compute per-trace stats
+    for tr in all_traces:
+        token_scores = tr.get("token_scores") or tr.get("logprobs") or []
+        logps = avg_logprobs_from_token_scores(token_scores)
+        tr["_logps_list"] = logps
+        tr["_group_means"] = sliding_group_means(logps, window_size=window_size, stride=stride)
+        tr["_min_group_mean"] = float(np.min(tr["_group_means"])) if tr["_group_means"] else float("-inf")
+        tr["_is_correct_checked"] = False
+        tr["_is_correct"] = False
+
+    # execution checking (dedup)
+    for tr in all_traces:
+        txt = (tr.get("extracted_answer") or tr.get("text") or "").strip()
+        if not txt:
+            tr["_is_correct_checked"] = True
+            tr["_is_correct"] = False
+            continue
+        if dedup_exec:
+            if txt not in pass_cache:
+                passed = False
+                if problems_dict is not None and check_correctness is not None:
+                    try:
+                        prob = problems_dict[task_id]
+                        res = check_correctness(prob, txt, timeout=exec_timeout)
+                        passed = bool(res.get("passed", False))
+                    except Exception:
+                        passed = False
+                pass_cache[txt] = passed
+            tr["_is_correct_checked"] = True
+            tr["_is_correct"] = pass_cache[txt]
+        else:
+            passed = False
+            if problems_dict is not None and check_correctness is not None:
+                try:
+                    prob = problems_dict[task_id]
+                    res = check_correctness(prob, txt, timeout=exec_timeout)
+                    passed = bool(res.get("passed", False))
+                except Exception:
+                    passed = False
+            tr["_is_correct_checked"] = True
+            tr["_is_correct"] = passed
+
+    # accumulate scores by min_group_mean to buckets
+    sum_score_for_1 = 0.0
+    sum_score_for_0 = 0.0
+    for tr in all_traces:
+        score = tr["_min_group_mean"]
+        if tr["_is_correct"]:
+            sum_score_for_1 += score
+        else:
+            sum_score_for_0 += score
+
+    vote_result = 1 if sum_score_for_1 > sum_score_for_0 else 0
+
+    # per-trace rows
+    rows = []
+    for tr in all_traces:
+        row = {
+            "task_id": task_id,
+            "min_group_mean": tr["_min_group_mean"],
+            "group_means": tr["_group_means"],
+            "is_correct": int(bool(tr["_is_correct"])),
+            "voted_label": int(vote_result),
+            "extracted_answer": tr.get("extracted_answer"),
+            "text": tr.get("text"),
+            "token_scores": tr.get("token_scores"),
+            "raw_trace_meta": {k: v for k, v in tr.items() if k not in ("token_scores", "text")}
+        }
+        rows.append(row)
+
+    meta = {
+        "sum_score_for_1": float(sum_score_for_1),
+        "sum_score_for_0": float(sum_score_for_0),
+        "vote_result": int(vote_result),
+        "n_traces": len(all_traces)
+    }
+    return rows, meta, pass_cache
+
+# ---------------------------
+# vLLM generation wrapper
+# ---------------------------
+def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
+                         temperature=0.6, max_tokens=512, logprobs=20, tp_size=1):
+    if LLM is None or SamplingParams is None:
+        raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
+    llm = LLM(model=model_path, tensor_parallel_size=tp_size, enable_prefix_caching=True, trust_remote_code=True)
+    sampling_params = SamplingParams(n=n_samples, temperature=temperature, top_p=0.95,
+                                     max_tokens=max_tokens, logprobs=logprobs)
+    outputs = llm.generate([prompt], sampling_params)
+    traces = []
+    for out in outputs[0].outputs:
+        token_scores = []
+        if hasattr(out, "logprobs") and out.logprobs:
+            for lp in out.logprobs:
+                try:
+                    token_scores.append([lp.token, float(lp.logprob)])
+                except Exception:
+                    try:
+                        token_scores.append([lp.token, float(lp["logprob"])])
+                    except Exception:
+                        pass
+        traces.append({"text": out.text, "token_scores": token_scores})
+    return traces
+
+# ---------------------------
+# task processing and pipeline
+# ---------------------------
+def process_one_task(task_entry, model_path, tokenizer, problems_dict,
+                     n_samples=200, temperature=0.6, max_tokens=512, logprobs=20,
+                     tp_size=1, window_size=1024, stride=None,
+                     exec_timeout=3.0, dedup_exec=True, out_dir="outputs",
+                     qidx=None, rid="run", pass_cache=None):
+    os.makedirs(out_dir, exist_ok=True)
+    task_id = task_entry.get("task_id") or task_entry.get("id") or f"q{qidx}"
+    prompt = task_entry.get("prompt") or task_entry.get("question") or ""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+
+    gen_start = time.time()
+    traces = generate_traces_vllm(model_path, prompt, tokenizer,
+                                  n_samples=n_samples, temperature=temperature,
+                                  max_tokens=max_tokens, logprobs=logprobs, tp_size=tp_size)
+    gen_time = time.time() - gen_start
+
+    vote_start = time.time()
+    rows, meta, pass_cache = vote_by_min_group_and_execution(task_id, traces, problems_dict,
+                                                            window_size=window_size, stride=stride,
+                                                            exec_timeout=exec_timeout, dedup_exec=dedup_exec,
+                                                            pass_cache=pass_cache)
+    vote_time = time.time() - vote_start
+
+    base = f"{out_dir}/task_{task_id}_rid{rid}_{timestamp}"
+    jsonl_path = base + "_per_trace.jsonl"
+    csv_path = base + "_per_trace.csv"
+    pkl_path = base + "_summary.pkl"
+
+    write_jsonl(jsonl_path, rows)
+    try:
+        write_csv(csv_path, rows)
+    except Exception:
+        pass
+
+    summary = {
+        "task_id": task_id,
+        "rid": rid,
+        "n_samples": n_samples,
+        "generation_time": gen_time,
+        "vote_time": vote_time,
+        "meta": meta,
+        "jsonl_path": jsonl_path,
+        "csv_path": csv_path
+    }
+    with open(pkl_path, "wb") as f:
+        pickle.dump({"summary": summary, "rows": rows}, f)
+
+    return summary, rows, pass_cache
+
+# ---------------------------
+# CLI / main
+# ---------------------------
+def parse_args():
+    p = argparse.ArgumentParser()
+    p.add_argument("--model", type=str, required=True, help="hub id or local model dir")
+    p.add_argument("--dataset", type=str, default=None, help="jsonl dataset path; if omitted, auto-download HumanEval")
+    p.add_argument("--out_dir", type=str, default="outputs")
+    p.add_argument("--n_samples", type=int, default=200)
+    p.add_argument("--temperature", type=float, default=0.6)
+    p.add_argument("--max_tokens", type=int, default=512)
+    p.add_argument("--logprobs", type=int, default=20)
+    p.add_argument("--tp_size", type=int, default=1)
+    p.add_argument("--window_size", type=int, default=1024)
+    p.add_argument("--stride", type=int, default=None)
+    p.add_argument("--exec_timeout", type=float, default=3.0)
+    p.add_argument("--dedup_exec", action="store_true")
+    p.add_argument("--qid", type=int, default=None)
+    p.add_argument("--rid", type=str, default="run")
+    return p.parse_args()
+
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str,
-                        default="Qwen/Qwen3-Coder-30B-A3B-Instruct",
-                        help="Hub 模型 ID 或本地目录")
-    parser.add_argument("--out", default="humaneval_qwen30b_conf.jsonl")
-    parser.add_argument("--n_samples", type=int, default=200)
-    parser.add_argument("--temperature", type=float, default=0.6)
-    parser.add_argument("--tp", type=int, default=4,
-                        help="tensor_parallel_size，30B 建议 4 卡")
-    args = parser.parse_args()
-    global TP_SIZE
-    TP_SIZE = args.tp
+    args = parse_args()
 
-    print("🚀 开始生成...")
-    samples = generate_main(args.model, args.n_samples, args.temperature)
+    # ensure dataset
+    if args.dataset:
+        dataset_path = args.dataset
+    else:
+        dataset_path = maybe_download_humaneval(target_dir=".", filename="HumanEval.jsonl")
 
-    with open(args.out, "w", encoding="utf-8") as f:
-        for s in samples:
-            f.write(json.dumps(s, ensure_ascii=False) + "\n")
-    print(f"💾 已保存含置信度样本 -> {args.out}")
+    # load dataset lines
+    dataset = []
+    for item in stream_jsonl(dataset_path):
+        dataset.append(item)
+    if not dataset:
+        print("Empty dataset:", dataset_path); return
 
-    # 可选：直接评测
-    print("⏳ 执行官方评测（3 秒/题）...")
-    pass_k = evaluate(samples)
-    print("📊 结果：", pass_k)
+    # attempt to load human-eval problems dict if available
+    problems = None
+    if read_problems is not None:
+        try:
+            problems = read_problems()
+        except Exception:
+            problems = None
 
+    # init tokenizer if available
+    tokenizer = None
+    if AutoTokenizer is not None:
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
+        except Exception:
+            tokenizer = None
+
+    # run tasks
+    indices = range(len(dataset)) if args.qid is None else [args.qid]
+    pass_cache = {}  # cross-task caching of exec results
+    for idx in indices:
+        entry = dataset[idx]
+        print(f"\n=== Processing idx {idx} id {entry.get('task_id') or entry.get('id') or idx} ===")
+        summary, rows, pass_cache = process_one_task(entry, args.model, tokenizer, problems,
+                                                     n_samples=args.n_samples, temperature=args.temperature,
+                                                     max_tokens=args.max_tokens, logprobs=args.logprobs,
+                                                     tp_size=args.tp_size, window_size=args.window_size,
+                                                     stride=args.stride, exec_timeout=args.exec_timeout,
+                                                     dedup_exec=args.dedup_exec, out_dir=args.out_dir,
+                                                     qidx=idx, rid=args.rid, pass_cache=pass_cache)
+        print("Saved:", summary["jsonl_path"], summary.get("csv_path"))
+        print("Meta:", summary["meta"])
 
 if __name__ == "__main__":
     main()
