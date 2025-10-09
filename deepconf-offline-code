@@ -1,148 +1,134 @@
-import os
-import time
-import argparse
-import pandas as pd
-import numpy as np
-import re
-from datetime import datetime
+"""
+HumanEval workflow（含置信度）
+1. 下载官方题库
+2. vLLM 生成 200 条路径
+3. dump token 级置信度
+4. 生成官方评测格式
+5. 打印 Pass@k
+"""
+import os, sys, json, time, argparse, numpy as np
+import urllib.request
 from vllm import LLM, SamplingParams
 from transformers import AutoTokenizer
-from helper_trans import process_batch_results_offline, weighted_majority_vote
-from torchmetrics.text import TranslationEditRate
-from bert_score import score
+
+HUMAN_EVAL_URL = "https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz"
+HUMAN_EVAL_FILE = "HumanEval.jsonl"
 
 
-MODEL_PATH = "/dbfs/FileStore/models/qwen3-1.7B-finetune-TM32/checkpoint-24975"
-MAX_TOKENS = 512
-TOTAL_BUDGET = 200  # 生成路径数
-WINDOW_SIZE = 5
-
-def make_token_conf_pairs(tokens, confs):
-    if not tokens or not confs:
-        return ""
-    n = min(len(tokens), len(confs))
-    pairs = []
-    for i in range(n):
-        token_str = tokens[i].strip()
-        pairs.append(f"{token_str}:{confs[i]:.4f}")
-    return ",".join(pairs)
-
-def extract_lowest_chinese_tokens(pairs_str, top_k=3):
-    if not pairs_str:
-        return ""
-    token_score_list = []
-    for part in pairs_str.split(";"):
-        for item in part.split(","):
-            item = item.strip()
-            if ":" not in item:
-                continue
-            parts = item.rsplit(":", 1)  # 从右边切一次
-            if len(parts) != 2:
-                continue
-            token, score_str = parts
-            token = token.strip()
-            try:
-                token_score = float(score_str)
-            except:
-                continue
-            # 只保留中文字符
-            if re.search(r'[\u4e00-\u9fff]', token):
-                token_score_list.append((token, token_score))
-    if not token_score_list:
-        return ""
-    # 按分数升序排序，取前 top_k
-    token_score_list.sort(key=lambda x: x[1])
-    lowest = token_score_list[:top_k]
-    return ",".join([f"{t}:{s:.4f}" for t, s in lowest])
+# ---------- 1. 自动下载题库 ----------
+def maybe_download():
+    if os.path.exists(HUMAN_EVAL_FILE):
+        return
+    print("↓ 下载 HumanEval 题库...")
+    urllib.request.urlretrieve(HUMAN_EVAL_URL, "HumanEval.jsonl.gz")
+    os.system("gunzip -c HumanEval.jsonl.gz > HumanEval.jsonl")
+    os.remove("HumanEval.jsonl.gz")
 
 
-def main(input_excel):
-    os.makedirs("outputs", exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_excel = os.path.join("outputs", f"offline_translation_{timestamp}.xlsx")
+# ---------- 2. 生成 ----------
+def generate_main(model_path, n_samples=200, temperature=0.6, max_tokens=512):
+    maybe_download()
 
-    total_start_time = time.time()
+    print("加载 tokenizer & vLLM...")
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    llm = LLM(model=model_path,
+              tensor_parallel_size=1,
+              enable_prefix_caching=True,
+              trust_remote_code=True)
 
-    # 1. 读取 Excel
-    df = pd.read_excel(input_excel)
-    if 'source' not in df.columns:
-        raise ValueError("Excel 文件中必须包含 'source' 列")
-    '''
-    # 2. 分层抽样：最低 TER 10 行 + 其他随机 10 行
-    lowest_10 = df.nsmallest(10, 'Qwen3-1.7B-TM32-Ter')
-    remaining = df.drop(lowest_10.index)
-    random_10 = remaining.sample(n=min(10, len(remaining)), random_state=42)
-    df = pd.concat([lowest_10, random_10]).reset_index(drop=True)
-    '''
-    # 3. 初始化 tokenizer & LLM
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_PATH, trust_remote_code=True, local_files_only=True)
-    llm = LLM(
-        model=MODEL_PATH,
-        tensor_parallel_size=len(os.environ.get("CUDA_VISIBLE_DEVICES", "0").split(",")),
-        enable_prefix_caching=True,
-        trust_remote_code=True,
+    sampling_params = SamplingParams(
+        n=n_samples,
+        temperature=temperature,
+        top_p=0.95,
+        max_tokens=max_tokens,
+        logprobs=20,               # 保留置信度
     )
 
-    translations = []
-    token_conf_pairs_all = []
-    group_conf_all = []
-
-    # 4. 循环处理每一行
-    for idx, row in df.iterrows():
-        source_text = str(row['source'])
-        prompt = f"For the translation task of medical drugs, translate the following english sentence into chinese:\n{source_text}\n"
-
-        sampling_params = SamplingParams(
-            n=TOTAL_BUDGET,
-            temperature=1.0,
-            top_p=1.0,
-            top_k=40,
-            max_tokens=MAX_TOKENS,
-            logprobs=20,
-        )
-
+    samples = []
+    for line in open(HUMAN_EVAL_FILE):
+        prob = json.loads(line)
+        prompt = prob["prompt"]          # 签名+docstring
         outputs = llm.generate([prompt], sampling_params)
-        result = process_batch_results_offline(outputs, ground_truth="", window_size=WINDOW_SIZE, tokenizer=tokenizer)
 
-        # 投票
-        voting_answers = []
-        voting_weights = []
-        for trace in result['traces']:
-            if trace['text']:
-                voting_answers.append(trace['text'])
-                scores = [score_ for _, score_ in trace.get('group_conf_tokens', [])]
-                min_conf = min(scores) if scores else 0
-                voting_weights.append(min_conf)
-        final_translation = weighted_majority_vote(voting_answers, voting_weights) or ""
-        translations.append(final_translation)
+        traces = []
+        for out in outputs[0].outputs:
+            tokens = [o.token for o in out.logprobs]
+            scores = [o.logprob for o in out.logprobs]
+            traces.append({
+                "text": out.text,
+                "token_scores": list(zip(tokens, scores))
+            })
 
-        per_trace_pairs = []
-        for trace in result['traces']:
-            pairs_str = make_token_conf_pairs(trace.get('tokens', ''), trace.get('confs', []))
-            per_trace_pairs.append(pairs_str)
-        token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
-        group_conf_all.append(
-            " ; ".join([
-                " ".join([f"{token_str}:{group_score:.4f}" for token_str, group_score in trace.get('group_conf_tokens', [])])
-                for trace in result['traces']
-            ])
-        )
-        if (idx + 1) % 5 == 0:
-            print(f"Processed {idx+1}/{len(df)} rows...")
+        # 选平均 logprob 最高的一条作为最终答案
+        best_text = max(traces, key=lambda x: np.mean([s for _, s in x["token_scores"]]))["text"]
+        samples.append({
+            "task_id": prob["task_id"],
+            "completion": best_text,      # 官方评测只认这个
+            "all_traces": traces          # 置信度留底
+        })
 
-    # 5. 保存结果
-    df['translation'] = translations
-    df['token_confidences'] = token_conf_pairs_all
-    df['group_conf'] = group_conf_all
-    df.to_excel(output_excel, index=False)
-    print(f"Results saved to {output_excel}")
-    print(f"Total execution time: {time.time() - total_start_time:.2f}s")
+        if len(samples) % 20 == 0:
+            print(f"✅ 完成 {len(samples)}/164")
 
-def parse_args():
-    parser = argparse.ArgumentParser(description='Offline translation with stratified sampling and weighted voting')
-    parser.add_argument('--input_excel', type=str, required=True)
-    return parser.parse_args()
+    return samples
+
+
+# ---------- 3. 官方评测 ----------
+def evaluate(samples, k_list=[1, 10, 100]):
+    # 安装评测器（仅首次）
+    os.system("pip -q install human-eval")
+    from human_eval.execution import check_correctness
+    from human_eval.data import HUMAN_EVAL, read_problems
+
+    problems = read_problems()
+    result = {f"pass@{k}": [] for k in k_list}
+
+    for s in samples:
+        prob = problems[s["task_id"]]
+        completion = s["completion"]
+        # 拼装 & 执行
+        res = check_correctness(prob, completion, timeout=3.0)
+        result["pass@1"].append(1 if res["passed"] else 0)
+
+    # 计算 Pass@k（简化版，假设 n_samples>=max(k)）
+    def estimator(pass_flags, n, k):
+        """pass@k 无偏估计"""
+        import math
+        s = sum(pass_flags)
+        return 1.0 - math.comb(n - s, k) / math.comb(n, k)
+
+    n = len(samples[0]["all_traces"])
+    return {f"pass@{k}": estimator(result["pass@1"], n, k) for k in k_list}
+
+
+# ---------- 4. main ----------
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", type=str,
+                        default="Qwen/Qwen3-Coder-30B-A3B-Instruct",
+                        help="Hub 模型 ID 或本地目录")
+    parser.add_argument("--out", default="humaneval_qwen30b_conf.jsonl")
+    parser.add_argument("--n_samples", type=int, default=200)
+    parser.add_argument("--temperature", type=float, default=0.6)
+    parser.add_argument("--tp", type=int, default=4,
+                        help="tensor_parallel_size，30B 建议 4 卡")
+    args = parser.parse_args()
+    global TP_SIZE
+    TP_SIZE = args.tp
+
+    print("🚀 开始生成...")
+    samples = generate_main(args.model, args.n_samples, args.temperature)
+
+    with open(args.out, "w", encoding="utf-8") as f:
+        for s in samples:
+            f.write(json.dumps(s, ensure_ascii=False) + "\n")
+    print(f"💾 已保存含置信度样本 -> {args.out}")
+
+    # 可选：直接评测
+    print("⏳ 执行官方评测（3 秒/题）...")
+    pass_k = evaluate(samples)
+    print("📊 结果：", pass_k)
+
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args.input_excel)
+    main()
