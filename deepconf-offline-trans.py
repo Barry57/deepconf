@@ -135,9 +135,6 @@ def main(input_excel):
     df['token_confidences'] = token_conf_pairs_all
     df['group_conf'] = group_conf_all
 
-    # === 新增最低3个中文token列 ===
-    df['lowest3_chinese_tokens'] = df['token_confidences'].apply(lambda x: extract_lowest_chinese_tokens(x, top_k=3))
-
     # === 新增 TER 计算 ===
     if "target" in df.columns:
         Ter_caculate = TranslationEditRate(asian_support=True, normalize=True)
