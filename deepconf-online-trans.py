@@ -17,7 +17,6 @@ CONFIDENCE_PERCENTILE = 90
 WINDOW_SIZE = 5
 
 def make_token_conf_pairs(tokens, confs):
-    """将已知的 token 列表与置信度配对为 'token:score'"""
     if not tokens or not confs:
         return ""
     n = min(len(tokens), len(confs))
