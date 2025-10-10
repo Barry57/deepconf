@@ -172,8 +172,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
 
     # 假设 result['traces'] 是一个 list，每个元素为单条 trace 的字典
     for trace in result.get('traces', []):
-        pairs_str = make_token_conf_pairs(trace.get('tokens', []),
-                                          trace.get('confs', []))
+        pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
         group_conf_str = " ".join(
             f"{t}:{s:.4f}" for t, s in trace.get('group_conf_tokens', [])
         )
@@ -230,9 +229,9 @@ def run_pipeline(args):
 
         print(f"[{idx+1}/{max_tasks}] Generating {args.traces_per_task} traces for task {task_id} ...")
         gen_start = time.time()
-        traces, token_and_conf_pairs, group_conf = generate_traces_vllm(args.model, prompt, tokenizer,
-                                                                        n_samples=args.traces_per_task, temperature=args.temperature,
-                                                                        max_tokens=args.max_tokens, logprobs=args.logprobs, tp_size=args.tp_size)
+        traces = generate_traces_vllm(args.model, prompt, tokenizer,
+                                      n_samples=args.traces_per_task, temperature=args.temperature,
+                                      max_tokens=args.max_tokens, logprobs=args.logprobs, tp_size=args.tp_size)
         gen_time = time.time() - gen_start
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
 
