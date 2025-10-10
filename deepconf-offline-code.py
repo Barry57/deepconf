@@ -182,13 +182,6 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
             for trace in result['traces']
         ])
     )
-
-    # 构造 group_conf_tokens：[(token_str, group_score), ...]
-    group_conf_tokens = []
-    for tok, grp in zip(tokens, per_token_group_scores):
-        group_conf_tokens.append((tok, grp))
-
-    num_tokens = len(tokens)
     traces.append({
         "token_confidence": token_conf_pairs_all,
         "group_conf": group_conf_all,  # list[(tok, group_score)]
