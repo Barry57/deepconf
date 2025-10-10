@@ -148,7 +148,7 @@ def stream_jsonl(filename):
 # ---------------------------
 from typing import Optional
 def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
-                         temperature=0.6, max_tokens=512, logprobs=20, tp_size=1,
+                         temperature=0.6, max_tokens=60000, logprobs=20, tp_size=1,
                          window_size=1024, stride=None, save_json_path: Optional[str]=None):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
