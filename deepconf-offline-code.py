@@ -458,8 +458,8 @@ def run_pipeline(args):
             row = {
                 "task_id": task_id,
                 "extracted_answer": text,
-                "token_and_conf": json.dumps(token_and_conf_pairs, ensure_ascii=False),
-                "group_means": json.dumps(group_means, ensure_ascii=False),
+                "token_and_conf": token_and_conf_pairs,
+                "group_means": group_means,
                 "min_group_mean": min_group_mean,
                 "is_correct": is_corr
             }
