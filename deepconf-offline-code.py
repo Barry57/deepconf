@@ -44,7 +44,7 @@ except Exception:
     AutoTokenizer = None
 
 try:
-    from  import LLM, SamplingParams
+    from vllm import LLM, SamplingParams
 except Exception:
     LLM = None
     SamplingParams = None
