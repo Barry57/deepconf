@@ -189,9 +189,22 @@ def is_equal_answer(pred, ref):
 # vLLM generation wrapper
 # ---------------------------
 def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
-                         temperature=0.6, max_tokens=512, logprobs=20, tp_size=1):
+                         temperature=0.6, max_tokens=512, logprobs=20, tp_size=1,
+                         window_size=1024, stride=None):
+    """
+    直接从 vLLM outputs 提取 token/logprob（假定 out.logprobs 每项可通过 .token/.logprob 或 dict keys 访问）
+    然后计算：
+      - token_scores: [[token_str, float_logprob_or_None], ...]
+      - tokens: list[str]
+      - confs: list[float_or_None]
+      - group_means: sliding_group_means over confs (None -> 0.0)
+      - group_conf_tokens: per-token group score = mean(conf[i : i+window_size]) (None -> treated as 0.0)
+      - num_tokens
+    不调用任何外部 process_* 函数，严格按该逻辑。
+    """
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
+
     llm = LLM(
         model=model_path,
         tensor_parallel_size=tp_size,
@@ -203,40 +216,121 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
     sampling_params = SamplingParams(n=n_samples, temperature=temperature, top_p=0.95,
                                      max_tokens=max_tokens, logprobs=logprobs)
     outputs = llm.generate([prompt], sampling_params)
+
     traces = []
-    for out in outputs[0].outputs:
+    samples = getattr(outputs[0], "outputs", outputs)
+
+    # Helper: strict parser following你给的已知可工作格式
+    def _parse_lp_strict(lp_item):
+        """
+        仅按两种已知可工作格式解析：
+          1) 对象，带属性 .token 和 .logprob
+          2) dict，带键 'token' 和 'logprob'
+        其他情况返回 (None, None) 并由上层决定是否跳过或填充
+        """
+        if lp_item is None:
+            return None, None
+        # 对象属性优先
+        tok = None
+        lpv = None
+        try:
+            # 优先属性访问（用于 vllm 原生对象）
+            if hasattr(lp_item, "token") or hasattr(lp_item, "logprob"):
+                tok = getattr(lp_item, "token", None)
+                lpv = getattr(lp_item, "logprob", None)
+            # 回退到 dict 结构（严格键名）
+            elif isinstance(lp_item, dict):
+                tok = lp_item.get("token")
+                lpv = lp_item.get("logprob")
+            else:
+                return None, None
+            # 强制类型处理
+            if tok is not None:
+                tok = str(tok)
+            if lpv is not None:
+                try:
+                    lpv = float(lpv)
+                except Exception:
+                    lpv = None
+            return tok, lpv
+        except Exception:
+            return None, None
+
+    for out in samples:
+        # 取文本（若没有 text 字段则空字符串）
+        text = getattr(out, "text", None) if not isinstance(out, dict) else out.get("text", None)
+        if text is None:
+            text = ""
+
         token_scores = []
-        # 尝试多种可能的访问方式
+        # 仅按已知可工作方式读取 out.logprobs（存在则处理）
         if hasattr(out, "logprobs") and out.logprobs:
             for lp in out.logprobs:
-                try:
-                    # lp 可能是对象、有属性 token/logprob，或 dict
-                    token = getattr(lp, "token", None) or lp.get("token") if isinstance(lp, dict) else None
-                    logprob = getattr(lp, "logprob", None) or lp.get("logprob") if isinstance(lp, dict) else None
-                    if token is None and hasattr(lp, "text"):
-                        token = lp.text
-                    token_scores.append([token, float(logprob)])  # 若 logprob 不能转成 float 会抛异常
-                except Exception:
-                    # 退回到尝试把 lp 解析为 (token, logprob) 的序列
-                    try:
-                        if isinstance(lp, (list, tuple)) and len(lp) >= 2:
-                            token_scores.append([lp[0], float(lp[1])])
-                        else:
-                            # 忽略无法解析的项，但记录以便调试
-                            # print(f"Unparsed lp item: {lp!r}")
-                            pass
-                    except Exception:
-                        pass
-        # 备选：检查可能的 token_scores/score 字段名
-        elif hasattr(out, "token_scores") and out.token_scores:
-            for ts in out.token_scores:
-                try:
-                    token = ts.get("token") if isinstance(ts, dict) else None
-                    logprob = ts.get("logprob") if isinstance(ts, dict) else None
-                    token_scores.append([token, float(logprob)])
-                except Exception:
-                    pass
-        traces.append({"text": out.text if hasattr(out, "text") else str(out), "token_scores": token_scores})
+                tok, lpv = _parse_lp_strict(lp)
+                # 即便 tok 或 lpv 为 None，也按位置保留（保证长度对齐）
+                token_scores.append([tok, lpv])
+        else:
+            # 如果 out 是 dict 且包含 'logprobs' 键（严格键名），也处理
+            if isinstance(out, dict) and "logprobs" in out and out["logprobs"]:
+                for lp in out["logprobs"]:
+                    tok, lpv = _parse_lp_strict(lp)
+                    token_scores.append([tok, lpv])
+
+        # 如果没有任何 token_scores（极少数情况），以文本作为单一 token 并无置信度
+        if not token_scores:
+            if text:
+                token_scores = [[text, None]]
+            else:
+                token_scores = []
+
+        # 规范化 tokens 与 confs（按 token_scores 的顺序且长度一致）
+        tokens = []
+        confs = []
+        for tok, lpv in token_scores:
+            tokens.append(tok if tok is not None else "")
+            confs.append(lpv)
+
+        # 将 None 替换为 0.0 用于数值计算（与原 sliding_group_means 预期一致）
+        numerical_logps = []
+        for v in confs:
+            try:
+                numerical_logps.append(float(v) if v is not None else 0.0)
+            except Exception:
+                numerical_logps.append(0.0)
+
+        # 计算 group_means（使用你已有的 sliding_group_means）
+        group_means = sliding_group_means(numerical_logps, window_size=window_size, stride=stride)
+
+        # 计算每个 token 的组置信度：从该 token 开始的 window_size 长度窗口平均
+        per_token_group_scores = []
+        n = len(numerical_logps)
+        if n == 0:
+            per_token_group_scores = []
+        else:
+            ws = max(1, min(window_size, n))
+            for i in range(n):
+                j = min(i + ws, n)
+                if j > i:
+                    per_token_group_scores.append(float(np.mean(numerical_logps[i:j])))
+                else:
+                    per_token_group_scores.append(0.0)
+
+        # 构造 group_conf_tokens：[(token_str, group_score), ...]
+        group_conf_tokens = []
+        for tok, grp in zip(tokens, per_token_group_scores):
+            group_conf_tokens.append((tok, grp))
+
+        num_tokens = len(tokens)
+        traces.append({
+            "text": text,
+            "token_scores": token_scores,            # [[token, logprob], ...]
+            "tokens": tokens,                        # list[str]
+            "confs": confs,                          # list[float|None]
+            "group_conf_tokens": group_conf_tokens,  # list[(tok, group_score)]
+            "group_means": group_means,              # list[float]
+            "num_tokens": num_tokens
+        })
+
     return traces
 
 # ---------------------------
