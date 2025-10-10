@@ -265,10 +265,11 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
         token_scores = []
         # 仅按已知可工作方式读取 out.logprobs（存在则处理）
         if hasattr(out, "logprobs") and out.logprobs:
-            for lp in out.logprobs.values():
-                tok, lpv = _parse_lp_strict(lp)
-                # 即便 tok 或 lpv 为 None，也按位置保留（保证长度对齐）
-                token_scores.append([tok, lpv])
+            for logprob_dict in out.logprobs:
+                for lp in out.logprobs.values():
+                    tok, lpv = _parse_lp_strict(lp)
+                    # 即便 tok 或 lpv 为 None，也按位置保留（保证长度对齐）
+                    token_scores.append([tok, lpv])
         else:
             # 如果 out 是 dict 且包含 'logprobs' 键（严格键名），也处理
             if isinstance(out, dict) and "logprobs" in out and out["logprobs"]:
