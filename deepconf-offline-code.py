@@ -27,30 +27,15 @@ from collections import defaultdict
 import numpy as np
 from helper_trans import process_batch_results_offline
 
-# ---------------------------
-# confidence 计算：前 k 个 token 的平均 logprob 绝对值
-# ---------------------------
-def _get_rank1_logprob(logprob_dict):
-    """
-    logprob_dict: {token_id: Logprob(...), ...}
-    返回 rank=1 的 Logprob 对象（logprob 最大）
-    """
-    if not logprob_dict:
-        return None
-    return max(logprob_dict.values(), key=lambda x: x.logprob)
-
-def compute_confidence(token_scores, k=20):
-    """
-    token_scores: [[token_str, logprob_float], ...]
-    返回前 k 个 token 的平均 logprob 绝对值，保留 3 位小数
-    """
-    if not token_scores:
-        return None
-    topk = token_scores[:k]
-    logps = [lp for _, lp in topk if lp is not None]
-    if not logps:
-        return None
-    return round(-np.mean(logps), 3)
+def make_token_conf_pairs(tokens, confs):
+    if not tokens or not confs:
+        return ""
+    n = min(len(tokens), len(confs))
+    pairs = []
+    for i in range(n):
+        token_str = tokens[i].strip()
+        pairs.append(f"{token_str}:{confs[i]:.4f}")
+    return ",".join(pairs)
 
 # Optional dependencies
 try:
