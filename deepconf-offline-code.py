@@ -44,7 +44,7 @@ except Exception:
     AutoTokenizer = None
 
 try:
-    from vllm import LLM, SamplingParams
+    from  import LLM, SamplingParams
 except Exception:
     LLM = None
     SamplingParams = None
@@ -144,7 +144,7 @@ def stream_jsonl(filename):
                     yield json.loads(line)
 
 # ---------------------------
-# vLLM generation wrapper
+#  generation wrapper
 # ---------------------------
 from typing import Optional
 def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
@@ -231,7 +231,7 @@ def run_pipeline(args):
         gen_start = time.time()
         traces = generate_traces_vllm(args.model, prompt, tokenizer,
                                       n_samples=args.traces_per_task, temperature=args.temperature,
-                                      max_tokens=args.max_tokens, logprobs=args.logprobs, tp_size=args.tp_size)
+                                      max_tokens=args.max_tokens, logprobs=args.logprobs, tp_size=args.tp_size, window_size = args.window_size)
         gen_time = time.time() - gen_start
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
 
