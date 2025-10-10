@@ -26,6 +26,31 @@ from datetime import datetime
 from collections import defaultdict
 import numpy as np
 
+# ---------------------------
+# confidence 计算：前 k 个 token 的平均 logprob 绝对值
+# ---------------------------
+def _get_rank1_logprob(logprob_dict):
+    """
+    logprob_dict: {token_id: Logprob(...), ...}
+    返回 rank=1 的 Logprob 对象（logprob 最大）
+    """
+    if not logprob_dict:
+        return None
+    return max(logprob_dict.values(), key=lambda x: x.logprob)
+
+def compute_confidence(token_scores, k=20):
+    """
+    token_scores: [[token_str, logprob_float], ...]
+    返回前 k 个 token 的平均 logprob 绝对值，保留 3 位小数
+    """
+    if not token_scores:
+        return None
+    topk = token_scores[:k]
+    logps = [lp for _, lp in topk if lp is not None]
+    if not logps:
+        return None
+    return round(-np.mean(logps), 3)
+
 # Optional dependencies
 try:
     from transformers import AutoTokenizer
@@ -191,17 +216,6 @@ def is_equal_answer(pred, ref):
 def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
                          temperature=0.6, max_tokens=512, logprobs=20, tp_size=1,
                          window_size=1024, stride=None):
-    """
-    直接从 vLLM outputs 提取 token/logprob（假定 out.logprobs 每项可通过 .token/.logprob 或 dict keys 访问）
-    然后计算：
-      - token_scores: [[token_str, float_logprob_or_None], ...]
-      - tokens: list[str]
-      - confs: list[float_or_None]
-      - group_means: sliding_group_means over confs (None -> 0.0)
-      - group_conf_tokens: per-token group score = mean(conf[i : i+window_size]) (None -> treated as 0.0)
-      - num_tokens
-    不调用任何外部 process_* 函数，严格按该逻辑。
-    """
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
 
@@ -220,41 +234,30 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
     traces = []
     samples = getattr(outputs[0], "outputs", outputs)
     
-    # Helper: strict parser following你给的已知可工作格式
     def _parse_lp_strict(lp_item):
-        """
-        仅按两种已知可工作格式解析：
-          1) 对象，带属性 .token 和 .logprob
-          2) dict，带键 'token' 和 'logprob'
-        其他情况返回 (None, None) 并由上层决定是否跳过或填充
-        """
         if lp_item is None:
             return None, None
         # 对象属性优先
         tok = None
         lpv = None
-        try:
-            # 优先属性访问（用于 vllm 原生对象）
-            if hasattr(lp_item, "token") or hasattr(lp_item, "logprob"):
-                tok = getattr(lp_item, "token", None)
-                lpv = getattr(lp_item, "logprob", None)
-            # 回退到 dict 结构（严格键名）
-            elif isinstance(lp_item, dict):
-                tok = lp_item.get("token")
-                lpv = lp_item.get("logprob")
-            else:
-                return None, None
-            # 强制类型处理
-            if tok is not None:
-                tok = str(tok)
-            if lpv is not None:
-                try:
-                    lpv = float(lpv)
-                except Exception:
-                    lpv = None
-            return tok, lpv
-        except Exception:
+        if hasattr(lp_item, "token") or hasattr(lp_item, "logprob"):
+            tok = getattr(lp_item, "token", None)
+            lpv = getattr(lp_item, "logprob", None)
+        # 回退到 dict 结构（严格键名）
+        elif isinstance(lp_item, dict):
+            tok = lp_item.get("token")
+            lpv = lp_item.get("logprob")
+        else:
             return None, None
+        # 强制类型处理
+        if tok is not None:
+            tok = str(tok)
+        if lpv is not None:
+            try:
+                lpv = float(lpv)
+            except Exception:
+                lpv = None
+        return tok, lpv
 
     for out in samples:
         # 取文本（若没有 text 字段则空字符串）
@@ -262,20 +265,18 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
         if text is None:
             text = ""
 
-        token_scores = []
-        # 仅按已知可工作方式读取 out.logprobs（存在则处理）
-        if hasattr(out, "logprobs") and out.logprobs:
-            for logprob_dict in out.logprobs:
-                for lp in logprob_dict.values():
-                    tok, lpv = _parse_lp_strict(lp)
-                    # 即便 tok 或 lpv 为 None，也按位置保留（保证长度对齐）
-                    token_scores.append([tok, lpv])
-        else:
-            # 如果 out 是 dict 且包含 'logprobs' 键（严格键名），也处理
-            if isinstance(out, dict) and "logprobs" in out and out["logprobs"]:
-                for lp in out["logprobs"]:
-                    tok, lpv = _parse_lp_strict(lp)
-                    token_scores.append([tok, lpv])
+        token_scores = []          # [[token, confidence], ...] 最多 20 条
+        for logprob_dict in out.logprobs[:20]:   # 只扫前 20 个位置
+            best_lp = _get_rank1_logprob(logprob_dict)
+            tok, lpv = _parse_lp_strict(best_lp)
+            token_scores.append([tok, lpv])
+
+        # 计算这 20 个 token 的 confidence（平均 logprob 绝对值）
+        confidence = compute_confidence(token_scores, k=len(token_scores))  # k 用实际长度
+        if confidence is not None:
+            # 把每个 token 的 logprob 替换成 confidence
+            for item in token_scores:
+                item[1] = confidence
 
         # 如果没有任何 token_scores（极少数情况），以文本作为单一 token 并无置信度
         if not token_scores:
