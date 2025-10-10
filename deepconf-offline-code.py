@@ -344,7 +344,7 @@ def parse_args():
     p.add_argument("--max_tasks", type=int, default=164, help="max number of tasks to process")
     p.add_argument("--traces_per_task", type=int, default=200, help="number of traces to generate per task")
     p.add_argument("--temperature", type=float, default=0.6)
-    p.add_argument("--max_tokens", type=int, default=512)
+    p.add_argument("--max_tokens", type=int, default=60000)
     p.add_argument("--logprobs", type=int, default=20)
     p.add_argument("--tp_size", type=int, default=1)
     p.add_argument("--window_size", type=int, default=1024)
