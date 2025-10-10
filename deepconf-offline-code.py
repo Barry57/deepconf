@@ -25,6 +25,7 @@ import pickle
 from datetime import datetime
 from collections import defaultdict
 import numpy as np
+from helper_trans import process_batch_results_offline
 
 # ---------------------------
 # confidence 计算：前 k 个 token 的平均 logprob 绝对值
@@ -158,59 +159,6 @@ def stream_jsonl(filename):
                     yield json.loads(line)
 
 # ---------------------------
-# token/logprob helpers
-# ---------------------------
-def avg_logprobs_from_token_scores(token_scores):
-    vals = []
-    for item in token_scores or []:
-        if isinstance(item, (list, tuple)) and len(item) >= 2:
-            try:
-                vals.append(float(item[1]))
-            except Exception:
-                vals.append(0.0)
-        else:
-            try:
-                vals.append(float(item))
-            except Exception:
-                vals.append(0.0)
-    return vals
-
-def sliding_group_means(token_logprobs, window_size=1024, stride=None):
-    if stride is None:
-        stride = window_size
-    if not token_logprobs:
-        return []
-    n = len(token_logprobs)
-    if n <= window_size:
-        return [float(np.mean(token_logprobs))]
-    groups = []
-    i = 0
-    while i < n:
-        j = min(i + window_size, n)
-        groups.append(float(np.mean(token_logprobs[i:j])))
-        i += stride
-    return groups
-
-# ---------------------------
-# normalize & compare
-# ---------------------------
-def normalize_text_for_compare(s):
-    if s is None:
-        return ""
-    t = str(s).strip()
-    t = t.replace("\r\n", "\n").replace("\r", "\n")
-    t = " ".join(t.split())
-    if t.endswith(";"):
-        t = t[:-1].rstrip()
-    return t
-
-def is_equal_answer(pred, ref):
-    try:
-        return normalize_text_for_compare(pred) == normalize_text_for_compare(ref)
-    except Exception:
-        return False
-
-# ---------------------------
 # vLLM generation wrapper
 # ---------------------------
 def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
@@ -218,7 +166,6 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
                          window_size=1024, stride=None):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
-
     llm = LLM(
         model=model_path,
         tensor_parallel_size=tp_size,
@@ -227,111 +174,42 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
         max_model_len=32768,
         gpu_memory_utilization=0.8,
     )
+    token_conf_pairs_all = []
+    group_conf_all = []
     sampling_params = SamplingParams(n=n_samples, temperature=temperature, top_p=0.95,
                                      max_tokens=max_tokens, logprobs=logprobs)
     outputs = llm.generate([prompt], sampling_params)
+    result = process_batch_results_offline(outputs, ground_truth="", window_size=WINDOW_SIZE, tokenizer=tokenizer)
 
-    traces = []
-    samples = getattr(outputs[0], "outputs", outputs)
-    
-    def _parse_lp_strict(lp_item):
-        if lp_item is None:
-            return None, None
-        # 对象属性优先
-        tok = None
-        lpv = None
-        if hasattr(lp_item, "token") or hasattr(lp_item, "logprob"):
-            tok = getattr(lp_item, "token", None)
-            lpv = getattr(lp_item, "logprob", None)
-        # 回退到 dict 结构（严格键名）
-        elif isinstance(lp_item, dict):
-            tok = lp_item.get("token")
-            lpv = lp_item.get("logprob")
-        else:
-            return None, None
-        # 强制类型处理
-        if tok is not None:
-            tok = str(tok)
-        if lpv is not None:
-            try:
-                lpv = float(lpv)
-            except Exception:
-                lpv = None
-        return tok, lpv
+    for trace in result['traces']:
+        if trace['text']:
+            scores = [score_ for _, score_ in trace.get('group_conf_tokens', [])]
+            min_conf = min(scores) if scores else 0
 
-    for out in samples:
-        # 取文本（若没有 text 字段则空字符串）
-        text = getattr(out, "text", None) if not isinstance(out, dict) else out.get("text", None)
-        if text is None:
-            text = ""
+    per_trace_pairs = []
+    for trace in result['traces']:
+        pairs_str = make_token_conf_pairs(trace.get('tokens', ''), trace.get('confs', []))
+        per_trace_pairs.append(pairs_str)
+    token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
+    group_conf_all.append(
+        " ; ".join([
+            " ".join([f"{token_str}:{group_score:.4f}" for token_str, group_score in trace.get('group_conf_tokens', [])])
+            for trace in result['traces']
+        ])
+    )
+    if (idx + 1) % 5 == 0:
+        print(f"Processed {idx+1}/{len(df)} rows...")
 
-        token_scores = []          # [[token, confidence], ...] 最多 20 条
-        for logprob_dict in out.logprobs[:20]:   # 只扫前 20 个位置
-            best_lp = _get_rank1_logprob(logprob_dict)
-            tok, lpv = _parse_lp_strict(best_lp)
-            token_scores.append([tok, lpv])
+    # 构造 group_conf_tokens：[(token_str, group_score), ...]
+    group_conf_tokens = []
+    for tok, grp in zip(tokens, per_token_group_scores):
+        group_conf_tokens.append((tok, grp))
 
-        # 计算这 20 个 token 的 confidence（平均 logprob 绝对值）
-        confidence = compute_confidence(token_scores, k=len(token_scores))  # k 用实际长度
-        if confidence is not None:
-            # 把每个 token 的 logprob 替换成 confidence
-            for item in token_scores:
-                item[1] = confidence
-
-        # 如果没有任何 token_scores（极少数情况），以文本作为单一 token 并无置信度
-        if not token_scores:
-            if text:
-                token_scores = [[text, None]]
-            else:
-                token_scores = []
-
-        # 规范化 tokens 与 confs（按 token_scores 的顺序且长度一致）
-        tokens = []
-        confs = []
-        for tok, lpv in token_scores:
-            tokens.append(tok if tok is not None else "")
-            confs.append(lpv)
-
-        # 将 None 替换为 0.0 用于数值计算（与原 sliding_group_means 预期一致）
-        numerical_logps = []
-        for v in confs:
-            try:
-                numerical_logps.append(float(v) if v is not None else 0.0)
-            except Exception:
-                numerical_logps.append(0.0)
-
-        # 计算 group_means（使用你已有的 sliding_group_means）
-        group_means = sliding_group_means(numerical_logps, window_size=window_size, stride=stride)
-
-        # 计算每个 token 的组置信度：从该 token 开始的 window_size 长度窗口平均
-        per_token_group_scores = []
-        n = len(numerical_logps)
-        if n == 0:
-            per_token_group_scores = []
-        else:
-            ws = max(1, min(window_size, n))
-            for i in range(n):
-                j = min(i + ws, n)
-                if j > i:
-                    per_token_group_scores.append(float(np.mean(numerical_logps[i:j])))
-                else:
-                    per_token_group_scores.append(0.0)
-
-        # 构造 group_conf_tokens：[(token_str, group_score), ...]
-        group_conf_tokens = []
-        for tok, grp in zip(tokens, per_token_group_scores):
-            group_conf_tokens.append((tok, grp))
-
-        num_tokens = len(tokens)
-        traces.append({
-            "text": text,
-            "token_scores": token_scores,            # [[token, logprob], ...]
-            "tokens": tokens,                        # list[str]
-            "confs": confs,                          # list[float|None]
-            "group_conf_tokens": group_conf_tokens,  # list[(tok, group_score)]
-            "group_means": group_means,              # list[float]
-            "num_tokens": num_tokens
-        })
+    num_tokens = len(tokens)
+    traces.append({
+        "token_confidence": token_conf_pairs_all,
+        "group_conf": group_conf_all,  # list[(tok, group_score)]
+    })
 
     return traces
 
@@ -363,15 +241,7 @@ def run_pipeline(args):
             problems = read_problems()
         except Exception:
             problems = None
-
-    # init tokenizer optionally
-    tokenizer = None
-    if AutoTokenizer is not None:
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
-        except Exception:
-            tokenizer = None
-
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
     all_rows = []
     pass_cache = {}  # candidate -> bool for exec check caching
 
@@ -422,38 +292,21 @@ def run_pipeline(args):
         # per-trace processing
         for tr in traces:
             text = tr.get("text") or ""
-            token_scores = tr.get("token_scores") or []
-            logps = avg_logprobs_from_token_scores(token_scores)
-            group_means = sliding_group_means(logps, window_size=args.window_size, stride=args.stride)
-            min_group_mean = float(np.min(group_means)) if group_means else float("-inf")
-
-            # token_and_conf as JSON serializable list of dicts
-            token_and_conf_pairs = []
-            for item in token_scores:
-                if isinstance(item, (list, tuple)) and len(item) >= 2:
-                    tok = item[0]
-                    lp = item[1]
-                else:
-                    tok = None
-                    lp = item
-                try:
-                    lp_f = float(lp) if lp is not None else None
-                except Exception:
-                    lp_f = None
-                token_and_conf_pairs.append({"token": tok, "logprob": lp_f})
+            token_and_conf_pairs = tr['token_confidence']
+            group_conf = tr['group_conf']
+            min_group_mean = float(np.min(group_conf)) if group_conf else float("-inf")
+            
 
             # is_correct: exec check if requested and available; else string compare against ref_answer if present; else None
             is_corr = None
             if args.use_exec_check and problems is not None and check_correctness is not None:
                 is_corr = 1 if pass_cache.get(text, False) else 0
-            elif ref_answer is not None:
-                is_corr = 1 if is_equal_answer(text, ref_answer) else 0
 
             row = {
                 "task_id": task_id,
                 "extracted_answer": text,
                 "token_and_conf": token_and_conf_pairs,
-                "group_means": group_means,
+                "group_conf": group_conf,
                 "min_group_mean": min_group_mean,
                 "is_correct": is_corr
             }
