@@ -181,7 +181,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
         trace['group_confidence'] = group_conf_str
         traces.append(trace)
 
-    return {"traces": traces} 
+    return traces 
                           
 # ---------------------------
 # main pipeline (no jsonl output, single Excel)
