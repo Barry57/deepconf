@@ -406,7 +406,7 @@ def flush_to_disk_partial(rows, out_path, header_mode=True):
         write_header = header_mode and (not os.path.exists(csv_path))
         import csv
         with open(csv_path, "a", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["task_id","extracted_answer","token_and_conf_json","group_means_json","min_group_mean","is_correct"])
+            writer = csv.DictWriter(f, fieldnames=["task_id","extracted_answer","token_and_conf","group_means","min_group_mean","is_correct"])
             if write_header:
                 writer.writeheader()
             for r in rows:
