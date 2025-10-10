@@ -193,30 +193,50 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
     llm = LLM(
-    model=model_path,
-    tensor_parallel_size=tp_size,
-    enable_prefix_caching=False,
-    trust_remote_code=True,
-    max_model_len=32768,
-    gpu_memory_utilization=0.8
-)
+        model=model_path,
+        tensor_parallel_size=tp_size,
+        enable_prefix_caching=False,
+        trust_remote_code=True,
+        max_model_len=32768,
+        gpu_memory_utilization=0.8,
+    )
     sampling_params = SamplingParams(n=n_samples, temperature=temperature, top_p=0.95,
                                      max_tokens=max_tokens, logprobs=logprobs)
     outputs = llm.generate([prompt], sampling_params)
     traces = []
-    # outputs[0].outputs is an iterable of sample outputs
     for out in outputs[0].outputs:
         token_scores = []
+        # 尝试多种可能的访问方式
         if hasattr(out, "logprobs") and out.logprobs:
             for lp in out.logprobs:
                 try:
-                    token_scores.append([lp.token, float(lp.logprob)])
+                    # lp 可能是对象、有属性 token/logprob，或 dict
+                    token = getattr(lp, "token", None) or lp.get("token") if isinstance(lp, dict) else None
+                    logprob = getattr(lp, "logprob", None) or lp.get("logprob") if isinstance(lp, dict) else None
+                    if token is None and hasattr(lp, "text"):
+                        token = lp.text
+                    token_scores.append([token, float(logprob)])  # 若 logprob 不能转成 float 会抛异常
                 except Exception:
+                    # 退回到尝试把 lp 解析为 (token, logprob) 的序列
                     try:
-                        token_scores.append([lp.token, float(lp["logprob"])])
+                        if isinstance(lp, (list, tuple)) and len(lp) >= 2:
+                            token_scores.append([lp[0], float(lp[1])])
+                        else:
+                            # 忽略无法解析的项，但记录以便调试
+                            # print(f"Unparsed lp item: {lp!r}")
+                            pass
                     except Exception:
                         pass
-        traces.append({"text": out.text, "token_scores": token_scores})
+        # 备选：检查可能的 token_scores/score 字段名
+        elif hasattr(out, "token_scores") and out.token_scores:
+            for ts in out.token_scores:
+                try:
+                    token = ts.get("token") if isinstance(ts, dict) else None
+                    logprob = ts.get("logprob") if isinstance(ts, dict) else None
+                    token_scores.append([token, float(logprob)])
+                except Exception:
+                    pass
+        traces.append({"text": out.text if hasattr(out, "text") else str(out), "token_scores": token_scores})
     return traces
 
 # ---------------------------
@@ -336,8 +356,8 @@ def run_pipeline(args):
             row = {
                 "task_id": task_id,
                 "extracted_answer": text,
-                "token_and_conf_json": json.dumps(token_and_conf_pairs, ensure_ascii=False),
-                "group_means_json": json.dumps(group_means, ensure_ascii=False),
+                "token_and_conf": json.dumps(token_and_conf_pairs, ensure_ascii=False),
+                "group_means": json.dumps(group_means, ensure_ascii=False),
                 "min_group_mean": min_group_mean,
                 "is_correct": is_corr
             }
