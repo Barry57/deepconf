@@ -182,8 +182,6 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
             for trace in result['traces']
         ])
     )
-    if (idx + 1) % 5 == 0:
-        print(f"Processed {idx+1}/{len(df)} rows...")
 
     # 构造 group_conf_tokens：[(token_str, group_score), ...]
     group_conf_tokens = []
