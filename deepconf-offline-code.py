@@ -266,7 +266,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
         # 仅按已知可工作方式读取 out.logprobs（存在则处理）
         if hasattr(out, "logprobs") and out.logprobs:
             for logprob_dict in out.logprobs:
-                for lp in out.logprobs.values():
+                for lp in logprob_dict.values():
                     tok, lpv = _parse_lp_strict(lp)
                     # 即便 tok 或 lpv 为 None，也按位置保留（保证长度对齐）
                     token_scores.append([tok, lpv])
