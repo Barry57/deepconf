@@ -197,7 +197,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
     tensor_parallel_size=tp_size,
     enable_prefix_caching=False,
     trust_remote_code=True,
-    max_model_len=65536,
+    max_model_len=32768,
     gpu_memory_utilization=0.8
 )
     sampling_params = SamplingParams(n=n_samples, temperature=temperature, top_p=0.95,
