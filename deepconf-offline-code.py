@@ -192,7 +192,14 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
                          temperature=0.6, max_tokens=512, logprobs=20, tp_size=1):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
-    llm = LLM(model=model_path, tensor_parallel_size=tp_size, enable_prefix_caching=True, trust_remote_code=True)
+    llm = LLM(
+    model=model_path,
+    tensor_parallel_size=tp_size,
+    enable_prefix_caching=False,
+    trust_remote_code=True,
+    max_model_len=65536,
+    gpu_memory_utilization=0.8
+)
     sampling_params = SamplingParams(n=n_samples, temperature=temperature, top_p=0.95,
                                      max_tokens=max_tokens, logprobs=logprobs)
     outputs = llm.generate([prompt], sampling_params)
