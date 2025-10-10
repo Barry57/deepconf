@@ -146,9 +146,10 @@ def stream_jsonl(filename):
 # ---------------------------
 # vLLM generation wrapper
 # ---------------------------
+from typing import Optional
 def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
                          temperature=0.6, max_tokens=512, logprobs=20, tp_size=1,
-                         window_size=1024, stride=None):
+                         window_size=1024, stride=None, save_json_path: Optional[str]=None):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
     llm = LLM(
@@ -159,36 +160,30 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
         max_model_len=32768,
         gpu_memory_utilization=0.8,
     )
+
     token_conf_pairs_all = []
     group_conf_all = []
+    traces = []
+
     sampling_params = SamplingParams(n=n_samples, temperature=temperature, top_p=0.95,
                                      max_tokens=max_tokens, logprobs=logprobs)
     outputs = llm.generate([prompt], sampling_params)
     result = process_batch_results_offline(outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
 
-    for trace in result['traces']:
-        if trace['text']:
-            scores = [score_ for _, score_ in trace.get('group_conf_tokens', [])]
-            min_conf = min(scores) if scores else 0
+    # 假设 result['traces'] 是一个 list，每个元素为单条 trace 的字典
+    for trace in result.get('traces', []):
+        pairs_str = make_token_conf_pairs(trace.get('tokens', []),
+                                          trace.get('confs', []))
+        group_conf_str = " ".join(
+            f"{t}:{s:.4f}" for t, s in trace.get('group_conf_tokens', [])
+        )
+        # 把两条字符串直接写进单条 trace 字典
+        trace['token_confidence'] = pairs_str
+        trace['group_confidence'] = group_conf_str
+        traces.append(trace)
 
-    per_trace_pairs = []
-    for trace in result['traces']:
-        pairs_str = make_token_conf_pairs(trace.get('tokens', ''), trace.get('confs', []))
-        per_trace_pairs.append(pairs_str)
-    token_conf_pairs_all.append(" ; ".join(per_trace_pairs))
-    group_conf_all.append(
-        " ; ".join([
-            " ".join([f"{token_str}:{group_score:.4f}" for token_str, group_score in trace.get('group_conf_tokens', [])])
-            for trace in result['traces']
-        ])
-    )
-    traces.append({
-        "token_confidence": token_conf_pairs_all,
-        "group_conf": group_conf_all,  # list[(tok, group_score)]
-    })
-
-    return traces
-
+    return {"traces": traces} 
+                          
 # ---------------------------
 # main pipeline (no jsonl output, single Excel)
 # ---------------------------
@@ -235,9 +230,9 @@ def run_pipeline(args):
 
         print(f"[{idx+1}/{max_tasks}] Generating {args.traces_per_task} traces for task {task_id} ...")
         gen_start = time.time()
-        traces = generate_traces_vllm(args.model, prompt, tokenizer,
-                                      n_samples=args.traces_per_task, temperature=args.temperature,
-                                      max_tokens=args.max_tokens, logprobs=args.logprobs, tp_size=args.tp_size)
+        traces, token_and_conf_pairs, group_conf = generate_traces_vllm(args.model, prompt, tokenizer,
+                                                                        n_samples=args.traces_per_task, temperature=args.temperature,
+                                                                        max_tokens=args.max_tokens, logprobs=args.logprobs, tp_size=args.tp_size)
         gen_time = time.time() - gen_start
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
 
@@ -268,25 +263,22 @@ def run_pipeline(args):
         # per-trace processing
         for tr in traces:
             text = tr.get("text") or ""
-            token_and_conf_pairs = tr['token_confidence']
-            group_conf = tr['group_conf']
-            min_group_mean = float(np.min(group_conf)) if group_conf else float("-inf")
-            
+            group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
+            min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")            
 
             # is_correct: exec check if requested and available; else string compare against ref_answer if present; else None
             is_corr = None
             if args.use_exec_check and problems is not None and check_correctness is not None:
                 is_corr = 1 if pass_cache.get(text, False) else 0
 
-            row = {
+            all_rows.append({
                 "task_id": task_id,
                 "extracted_answer": text,
-                "token_and_conf": token_and_conf_pairs,
-                "group_conf": group_conf,
+                "token_and_conf": tr['token_confidence'],
+                "group_conf": tr['group_confidence'],
                 "min_group_mean": min_group_mean,
                 "is_correct": is_corr
-            }
-            all_rows.append(row)
+            })
 
         # optional: flush to disk periodically to avoid huge memory usage
         if len(all_rows) >= args.flush_every:
@@ -331,7 +323,7 @@ def flush_to_disk_partial(rows, out_path, header_mode=True):
         write_header = header_mode and (not os.path.exists(csv_path))
         import csv
         with open(csv_path, "a", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["task_id","extracted_answer","token_and_conf","group_means","min_group_mean","is_correct"])
+            writer = csv.DictWriter(f, fieldnames=["task_id","extracted_answer","token_and_conf","group_conf","min_group_mean","is_correct"])
             if write_header:
                 writer.writeheader()
             for r in rows:
