@@ -179,7 +179,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
     sampling_params = SamplingParams(n=n_samples, temperature=temperature, top_p=0.95,
                                      max_tokens=max_tokens, logprobs=logprobs)
     outputs = llm.generate([prompt], sampling_params)
-    result = process_batch_results_offline(outputs, ground_truth="", window_size=WINDOW_SIZE, tokenizer=tokenizer)
+    result = process_batch_results_offline(outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
 
     for trace in result['traces']:
         if trace['text']:
