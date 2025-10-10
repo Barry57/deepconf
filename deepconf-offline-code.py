@@ -219,14 +219,6 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
 
     traces = []
     samples = getattr(outputs[0], "outputs", outputs)
-
-
-                           
-    print('DEBUG: raw vllm output keys =', list(samples[0].__dict__.keys()) if hasattr(samples[0],'__dict__') else list(samples[0].keys()))
-    print('DEBUG: 1st sample logprobs =', getattr(samples[0],'logprobs',None) or samples[0].get('logprobs','MISSING'))
-
-
-
     
     # Helper: strict parser following你给的已知可工作格式
     def _parse_lp_strict(lp_item):
