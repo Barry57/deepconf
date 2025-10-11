@@ -262,6 +262,13 @@ def run_pipeline(args):
         # per-trace processing
         for tr in traces:
             text = tr.get("text") or ""
+
+          
+            if isinstance(text, list)：
+                text = "\n".join(str(t) for t in text if t)
+            text = text.replace("\r", "\\r").replace("\n", "\\n")    
+
+          
             group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
             min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")            
 
