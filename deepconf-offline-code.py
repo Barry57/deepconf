@@ -264,7 +264,7 @@ def run_pipeline(args):
             text = tr.get("text") or ""
 
           
-            if isinstance(text, list)：
+            if isinstance(text, list):
                 text = "\n".join(str(t) for t in text if t)
             text = text.replace("\r", "\\r").replace("\n", "\\n")    
 
