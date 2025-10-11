@@ -176,9 +176,9 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
         group_conf_str = " ".join(
             f"{t}:{s:.4f}" for t, s in trace.get('group_conf_tokens', [])
         )
-        # 把两条字符串直接写进单条 trace 字典
-        trace['token_confidence'] = pairs_str
-        trace['group_confidence'] = group_conf_str
+        
+        trace['token_confidence'] = pairs_str.replace("\r", "\\r").replace("\n", "\\n")
+        trace['group_confidence'] = group_conf_str.replace("\r", "\\r").replace("\n", "\\n")
         traces.append(trace)
 
     return traces 
