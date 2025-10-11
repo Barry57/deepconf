@@ -37,29 +37,27 @@ def make_token_conf_pairs(tokens, confs):
         pairs.append(f"{token_str}:{confs[i]:.4f}")
     return ",".join(pairs)
 
-# Optional dependencies
-try:
-    from transformers import AutoTokenizer
-except Exception:
-    AutoTokenizer = None
+def clean_generated_code(text: str) -> str:
+    if not text:
+        return ""
+    lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith('#'):
+            continue
+        if stripped.startswith(('def ', 'if __name__')):
+            break
+        lines.append(line)
+    # 统一缩进：如果整段都没缩进，给它加 4 空格
+    if lines and not lines[0].startswith((' ', '\t')):
+        lines = ['    ' + l for l in lines]
+    return '\n'.join(lines)
 
-try:
-    from vllm import LLM, SamplingParams
-except Exception:
-    LLM = None
-    SamplingParams = None
-
-try:
-    from human_eval.execution import check_correctness
-    from human_eval.data import read_problems
-except Exception:
-    check_correctness = None
-    read_problems = None
-
-try:
-    import pandas as pd
-except Exception:
-    pd = None
+from transformers import AutoTokenizer
+from vllm import LLM, SamplingParams
+from human_eval.execution import check_correctness
+from human_eval.data import read_problems
+import pandas as pd
 
 # Default HumanEval download URL
 HUMAN_EVAL_DEFAULT_URL = "https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz "
@@ -235,44 +233,21 @@ def run_pipeline(args):
         gen_time = time.time() - gen_start
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
 
-        # prepare unique candidates for exec check if requested
-        unique_candidates = {}
-        if args.use_exec_check and problems is not None and check_correctness is not None:
-            for tr in traces:
-                txt = (tr.get("text") or "").strip()
-                if txt and txt not in unique_candidates:
-                    unique_candidates[txt] = None
-            # run dedup exec checks (cache across tasks)
-            for cand in list(unique_candidates.keys()):
-                if cand in pass_cache:
-                    unique_candidates[cand] = pass_cache[cand]
-                    continue
-                try:
-                    prob = problems.get(task_id) if isinstance(problems, dict) else None
-                    if prob is not None:
-                        res = check_correctness(prob, cand, timeout=args.exec_timeout)
-                        passed = bool(res.get("passed", False))
-                    else:
-                        passed = False
-                except Exception:
-                    passed = False
-                unique_candidates[cand] = passed
-                pass_cache[cand] = passed
-
         # per-trace processing
         for tr in traces:
-            text = tr.get("text") or ""
+            raw_text        = tr.get("text") or ""               # 原始
+            cleaned_text    = clean_generated_code(raw_text)     # 给判分用
             group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
             min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")            
 
             # is_correct: exec check if requested and available; else string compare against ref_answer if present; else None
             is_corr = None
             if args.use_exec_check and problems is not None and check_correctness is not None:
-                is_corr = 1 if pass_cache.get(text, False) else 0
+                is_corr = 1 if pass_cache.get(cleaned_text, False) else 0
 
             all_rows.append({
                 "task_id": task_id,
-                "extracted_answer": text,
+                "extracted_answer": raw_text,
                 "token_and_conf": tr['token_confidence'],
                 "group_conf": tr['group_confidence'],
                 "min_group_mean": min_group_mean,
