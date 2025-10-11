@@ -38,20 +38,34 @@ def make_token_conf_pairs(tokens, confs):
     return ",".join(pairs)
 
 def clean_generated_code(text: str) -> str:
+    """
+    删除从第一个包含 __name__ 的非注释非空行开始的该行及之后所有行，
+    并在返回的剩余部分中移除所有空行和以 # 开头的注释行。
+    若未找到这样的 __name__ 行，则仅删除所有空行和以 # 开头的注释行并返回。
+    """
     if not text:
         return ""
-    lines = []
-    for line in text.splitlines():
+    lines = text.splitlines()
+    cut_idx = None
+    for i, line in enumerate(lines):
         stripped = line.strip()
         if not stripped or stripped.startswith('#'):
             continue
-        if stripped.startswith(('def ', 'if __name__')):
+        if '__name__' in stripped:
+            cut_idx = i
             break
-        lines.append(line)
-    # 统一缩进：如果整段都没缩进，给它加 4 空格
-    if lines and not lines[0].startswith((' ', '\t')):
-        lines = ['    ' + l for l in lines]
-    return '\n'.join(lines)
+    if cut_idx is None:
+        kept = lines
+    else:
+        kept = lines[:cut_idx]
+    # 删除保留部分中的空行和以 # 开头的注释行
+    filtered = []
+    for line in kept:
+        s = line.strip()
+        if not s or s.startswith('#'):
+            continue
+        filtered.append(line)
+    return "\n".join(filtered)
 
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
