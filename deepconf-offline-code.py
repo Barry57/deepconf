@@ -175,6 +175,8 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
         pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
         group_conf_dict = {str(t): float(s) for t, s in trace.get('group_conf_tokens', [])}
         group_conf_str = json.dumps(group_conf_dict, ensure_ascii=False)
+        trace['token_confidence'] = pairs_str
+        trace['group_confidence'] = group_conf_str
         traces.append(trace)
 
     return traces 
