@@ -35,7 +35,7 @@ def make_token_conf_pairs(tokens, confs):
     for i in range(n):
         token_str = tokens[i].strip()
         pairs.append(f"{token_str}:{confs[i]:.4f}")
-    return ",".join(pairs)
+    return "|".join(pairs)
 
 # Optional dependencies
 try:
@@ -173,7 +173,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
     # 假设 result['traces'] 是一个 list，每个元素为单条 trace 的字典
     for trace in result.get('traces', []):
         pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
-        group_conf_str = " ".join(
+        group_conf_str = "|".join(
             f"{t}:{s:.4f}" for t, s in trace.get('group_conf_tokens', [])
         )
         
