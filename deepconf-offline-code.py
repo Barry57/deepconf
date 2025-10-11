@@ -31,11 +31,11 @@ def make_token_conf_pairs(tokens, confs):
     if not tokens or not confs:
         return ""
     n = min(len(tokens), len(confs))
-    tok_conf_dict = {
-        str(tokens[i]).strip(): float(confs[i])
-        for i in range(n)
-    }
-    return json.dumps(tok_conf_dict, ensure_ascii=False)
+    pairs = []
+    for i in range(n):
+        token_str = tokens[i].strip()
+        pairs.append(f"{token_str}:{confs[i]:.4f}")
+    return ",".join(pairs)
 
 # Optional dependencies
 try:
@@ -62,7 +62,7 @@ except Exception:
     pd = None
 
 # Default HumanEval download URL
-HUMAN_EVAL_DEFAULT_URL = "https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz"
+HUMAN_EVAL_DEFAULT_URL = "https://github.com/openai/human-eval/raw/master/data/HumanEval.jsonl.gz "
 
 # ---------------------------
 # download helpers
@@ -173,8 +173,10 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
     # 假设 result['traces'] 是一个 list，每个元素为单条 trace 的字典
     for trace in result.get('traces', []):
         pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
-        group_conf_dict = {str(t): float(s) for t, s in trace.get('group_conf_tokens', [])}
-        group_conf_str = json.dumps(group_conf_dict, ensure_ascii=False)
+        group_conf_str = " ".join(
+            f"{t}:{s:.4f}" for t, s in trace.get('group_conf_tokens', [])
+        )
+        # 把两条字符串直接写进单条 trace 字典
         trace['token_confidence'] = pairs_str
         trace['group_confidence'] = group_conf_str
         traces.append(trace)
@@ -260,13 +262,6 @@ def run_pipeline(args):
         # per-trace processing
         for tr in traces:
             text = tr.get("text") or ""
-
-          
-            if isinstance(text, list):
-                text = "\n".join(str(t) for t in text if t)
-            text = text.replace("\r", "\\r").replace("\n", "\\n")    
-
-          
             group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
             min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")            
 
