@@ -141,8 +141,8 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
                          warmup_traces: int = 50,
                          total_budget: int = 200,
                          confidence_percentile: float = 10.0,
-                         process_fn=_offline,
-                         process_fn_warmup=):
+                         process_fn=process_batch_results_offline,
+                         process_fn_warmup=process_batch_results):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
 
