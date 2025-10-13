@@ -230,14 +230,17 @@ def run_pipeline(args):
 
             # is_correct: exec check if requested and available; else string compare against ref_answer if present; else None
             is_corr = None
+            check_detail = None
+            
             if args.use_exec_check and problems is not None and check_correctness is not None:
-                # 使用 task_id + cleaned_text 作为缓存键，避免不同任务间复用同一文本的结果
                 cache_key = f"{task_id}||{cleaned_text}"
                 cached = pass_cache.get(cache_key)
                 if cached is not None:
-                    is_corr = 1 if cached else 0
+                    # cached expected to be dict returned by check_correctness
+                    check_detail = cached if isinstance(cached, dict) else {"passed": bool(cached), "cached": True}
+                    is_corr = 1 if check_detail.get("passed") else 0
                 else:
-                    # 找到对应 problem
+                    # find problem
                     problem = None
                     if isinstance(problems, dict):
                         problem = problems.get(task_id)
@@ -247,26 +250,60 @@ def run_pipeline(args):
                                 problem = p
                                 break
             
-                    passed = False
-                    if problem is not None:
-                        timeout = getattr(args, "exec_timeout", getattr(args, "timeout", 5))
+                    if problem is None:
+                        check_detail = {"passed": False, "reason": "no_problem_found"}
+                        is_corr = 0
+                    else:
+                        # construct the exact check_program here to record it
+                        completion = cleaned_text  # 或者 raw_text，视你想执行的内容
+                        constructed_program = (
+                            problem.get("prompt", "") + completion + "\n" +
+                            problem.get("test", "") + "\n" +
+                            f"check({problem.get('entry_point')})"
+                        )
+                        timeout = getattr(args, "exec_timeout", getattr(args, "timeout", 5.0))
+            
+                        # try calling check_correctness and capture its returned dict and timing
+                        start_check = time.time()
                         try:
-                            res = check_correctness(problem, completion=cleaned_text, timeout=timeout)
-                            passed = bool(res.get("passed", False))
-                        except Exception:
-                            passed = False
-                    pass_cache[cache_key] = bool(passed)
-                    is_corr = 1 if passed else 0
+                            # 如果 check_correctness 本身在内部打印或捕获了输出，它会在返回 dict 中包含 result/exception 等字段
+                            check_res = check_correctness(problem, completion=completion, timeout=timeout, completion_id=None)
+                            check_detail = dict(check_res) if isinstance(check_res, dict) else {"passed": bool(check_res)}
+                            # augment detail with the constructed program for debugging
+                            check_detail["constructed_program"] = constructed_program
+                            check_detail["check_time"] = time.time() - start_check
+                            is_corr = 1 if check_detail.get("passed") else 0
+                        except Exception as e:
+                            # 保证任何未捕获异常也会被记录
+                            check_detail = {
+                                "passed": False,
+                                "error": str(e),
+                                "constructed_program": constructed_program,
+                                "check_time": time.time() - start_check,
+                            }
+                            is_corr = 0
+            
+                        # cache full detail for future traces
+                        pass_cache[cache_key] = check_detail
+            
+            # fallback string compare if exec-check不可用
             elif ref_answer is not None:
-                is_corr = 1 if (cleaned_text.strip() == ref_answer.strip()) else 0
-
+                try:
+                    is_corr = 1 if (cleaned_text.strip() == ref_answer.strip()) else 0
+                    check_detail = {"method": "string_compare"}
+                except Exception as e:
+                    is_corr = 0
+                    check_detail = {"method": "string_compare", "error": str(e)}
+            
+            # append row with detailed check info for later inspection
             all_rows.append({
                 "task_id": task_id,
                 "extracted_answer": raw_text,
-                "token_and_conf": tr['token_confidence'],
-                "group_conf": tr['group_confidence'],
+                "token_and_conf": tr.get('token_confidence'),
+                "group_conf": tr.get('group_confidence'),
                 "min_group_mean": min_group_mean,
-                "is_correct": is_corr
+                "is_correct": is_corr,
+                "check_detail": check_detail,
             })
 
         # optional: flush to disk periodically to avoid huge memory usage
@@ -312,7 +349,7 @@ def flush_to_disk_partial(rows, out_path, header_mode=True):
         write_header = header_mode and (not os.path.exists(csv_path))
         import csv
         with open(csv_path, "a", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["task_id","extracted_answer","token_and_conf","group_conf","min_group_mean","is_correct"])
+            writer = csv.DictWriter(f, fieldnames=["task_id","extracted_answer","token_and_conf","group_conf","min_group_mean","is_correct","check_detail"])
             if write_header:
                 writer.writeheader()
             for r in rows:
