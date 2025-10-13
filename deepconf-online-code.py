@@ -25,7 +25,7 @@ import pickle
 from datetime import datetime
 from collections import defaultdict
 import numpy as np
-from helper_trans import process_batch_results_offline, process_batch_results
+from helper_trans import process_batch_results
 
 def make_token_conf_pairs(tokens, confs):
     if not tokens or not confs:
@@ -140,9 +140,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
                          save_json_path: Optional[str]=None,
                          warmup_traces: int = 8,
                          total_budget: int = 100,
-                         confidence_percentile: float = 10.0,
-                         process_fn=process_batch_results_offline,
-                         process_fn_warmup=process_batch_results):
+                         confidence_percentile: float = 10.0):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
 
@@ -168,7 +166,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
             logprobs=logprobs,
         )
         warmup_outputs = llm.generate([prompt], warmup_params)
-        warmup_result = process_fn_warmup(warmup_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
+        warmup_result = process_batch_results(warmup_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
         # 假设 warmup_result 中包含 'min_confs' 列表
         if 'min_confs' in warmup_result and len(warmup_result['min_confs']) > 0:
             conf_bar = float(np.percentile(warmup_result['min_confs'], confidence_percentile))
@@ -188,7 +186,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
         extra_args={'enable_conf': True, 'window_size': window_size, 'threshold': conf_bar}
     )
     final_outputs = llm.generate([prompt], final_params)
-    final_result = process_fn(final_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
+    final_result = process_batch_results(final_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
 
     def format_trace(trace):
         pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
@@ -280,7 +278,11 @@ def run_pipeline(args):
             raw_text        = tr.get("text") or "" 
             cleaned_text    = filter_code(raw_text)
             group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
-            min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")            
+            min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")
+            if tr in warm_traces:
+                trace_type = "warmup"
+            else:
+                trace_type = "stop" if tr.get("stopped", False) else "full"
 
             # is_correct: exec check if requested and available; else string compare against ref_answer if present; else None
             is_corr = None
@@ -358,6 +360,7 @@ def run_pipeline(args):
                 "min_group_mean": min_group_mean,
                 "is_correct": is_corr,
                 "check_detail": check_detail,
+                "trace_type": trace_type,
             })
 
         # optional: flush to disk periodically to avoid huge memory usage
@@ -403,7 +406,7 @@ def flush_to_disk_partial(rows, out_path, header_mode=True):
         write_header = header_mode and (not os.path.exists(csv_path))
         import csv
         with open(csv_path, "a", encoding="utf-8", newline="") as f:
-            writer = csv.DictWriter(f, fieldnames=["task_id","extracted_answer","token_and_conf","group_conf","min_group_mean","is_correct","check_detail"])
+            writer = csv.DictWriter(f, fieldnames=["task_id","extracted_answer","token_and_conf","group_conf","min_group_mean","is_correct","check_detail","trace_type"])
             if write_header:
                 writer.writeheader()
             for r in rows:
