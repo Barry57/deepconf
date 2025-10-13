@@ -138,8 +138,8 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
                          n_samples=200, temperature=0.6, max_tokens=60000,
                          logprobs=20, tp_size=1, window_size=1024, stride=None,
                          save_json_path: Optional[str]=None,
-                         warmup_traces: int = 50,
-                         total_budget: int = 200,
+                         warmup_traces: int = 8,
+                         total_budget: int = 100,
                          confidence_percentile: float = 10.0,
                          process_fn=process_batch_results_offline,
                          process_fn_warmup=process_batch_results):
@@ -253,9 +253,19 @@ def run_pipeline(args):
 
         print(f"[{idx+1}/{max_tasks}] Generating {args.traces_per_task} traces for task {task_id} ...")
         gen_start = time.time()
-        traces = generate_traces_vllm(args.model, prompt, tokenizer,
-                                      n_samples=args.traces_per_task, temperature=args.temperature,
-                                      max_tokens=args.max_tokens, logprobs=args.logprobs, tp_size=args.tp_size, window_size = args.window_size)
+        traces = generate_traces_vllm(
+            args.model,
+            prompt,
+            tokenizer,
+            n_samples=args.traces_per_task,
+            temperature=args.temperature,
+            max_tokens=args.max_tokens,
+            logprobs=args.logprobs,
+            tp_size=args.tp_size,
+            window_size=args.window_size,
+            warmup_traces=args.window_size, 
+            total_budget=args.total_budget,
+        )
         gen_time = time.time() - gen_start
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
 
@@ -412,6 +422,8 @@ def parse_args():
     p.add_argument("--logprobs", type=int, default=20)
     p.add_argument("--tp_size", type=int, default=1)
     p.add_argument("--window_size", type=int, default=1024)
+    p.add_argument("--warmup_traces", type=int, default=8)
+    p.add_argument("--total_budget", type=int, default=100)
     p.add_argument("--stride", type=int, default=None)
     p.add_argument("--use_exec_check", action="store_true", help="use human-eval check_correctness for correctness labels")
     p.add_argument("--exec_timeout", type=float, default=3.0)
