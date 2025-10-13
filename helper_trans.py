@@ -131,6 +131,7 @@ def process_output(output, ground_truth, window_size, tokenizer=None):
         "min_conf": min((score for _, score in group_conf_tokens), default=0),
         "extracted_answer": extracted_answer,
         "is_correct": is_correct,
+        "stopped": getattr(output, "finish_reason", None) == "stop" and getattr(output, "stop_reason", "").startswith("<gconf<"),
     }
 
 def process_batch_results(batch_outputs, ground_truth, window_size, tokenizer):
