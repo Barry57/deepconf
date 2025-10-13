@@ -226,7 +226,14 @@ def run_pipeline(args):
 
     # limit tasks
     max_tasks = min(args.max_tasks, len(dataset))
-    tasks = dataset[:max_tasks]
+    if args.task_idx:
+        tasks = []
+        for idx in args.task_idx:
+            if idx < 0 or idx >= len(dataset):
+                raise IndexError(f"数据集中没有第 {idx} 题（共 {len(dataset)} 道）")
+            tasks.append(dataset[idx])
+    else:
+        tasks = dataset[:max_tasks]
 
     # try load human-eval problems if exec-check requested
     problems = None
@@ -416,6 +423,8 @@ def parse_args():
     p.add_argument("--dataset", type=str, default=None, help="jsonl dataset path; if omitted, auto-download HumanEval")
     p.add_argument("--out", type=str, required=True, help="output path (xlsx preferred) e.g. /dbfs/FileStore/.../humaneval_traces.xlsx")
     p.add_argument("--max_tasks", type=int, default=164, help="max number of tasks to process")
+    p.add_argument("--task_idx", type=int, nargs='+', default=None,
+                   help="只想跑哪几道题，0-based，可写单个或多个，例：--task_idx 11  或  --task_idx 11 15 23")
     p.add_argument("--traces_per_task", type=int, default=200, help="number of traces to generate per task")
     p.add_argument("--temperature", type=float, default=0.6)
     p.add_argument("--max_tokens", type=int, default=60000)
