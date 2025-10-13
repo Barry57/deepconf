@@ -25,7 +25,7 @@ import pickle
 from datetime import datetime
 from collections import defaultdict
 import numpy as np
-from helper_trans import process_batch_results_offline
+from helper_trans import process_batch_results_offline, process_batch_results
 
 def make_token_conf_pairs(tokens, confs):
     if not tokens or not confs:
@@ -134,11 +134,18 @@ def stream_jsonl(filename):
 #  generation wrapper
 # ---------------------------
 from typing import Optional
-def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
-                         temperature=0.6, max_tokens=60000, logprobs=20, tp_size=1,
-                         window_size=1024, stride=None, save_json_path: Optional[str]=None):
+def generate_traces_vllm(model_path, prompt, tokenizer=None,
+                         n_samples=200, temperature=0.6, max_tokens=60000,
+                         logprobs=20, tp_size=1, window_size=1024, stride=None,
+                         save_json_path: Optional[str]=None,
+                         warmup_traces: int = 50,
+                         total_budget: int = 200,
+                         confidence_percentile: float = 10.0,
+                         process_fn=_offline,
+                         process_fn_warmup=):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
+
     llm = LLM(
         model=model_path,
         tensor_parallel_size=tp_size,
@@ -148,27 +155,57 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
         gpu_memory_utilization=0.8,
     )
 
-    token_conf_pairs_all = []
-    group_conf_all = []
     traces = []
 
-    sampling_params = SamplingParams(n=n_samples, temperature=temperature, top_p=0.95,
-                                     max_tokens=max_tokens, logprobs=logprobs)
-    outputs = llm.generate([prompt], sampling_params)
-    result = process_batch_results_offline(outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
-
-    # 假设 result['traces'] 是一个 list，每个元素为单条 trace 的字典
-    for trace in result.get('traces', []):
-        pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
-        group_conf_str = " ".join(
-            f"{t}:{s:.4f}" for t, s in trace.get('group_conf_tokens', [])
+    # ---------- warmup 阶段: 用较小样本估计置信度分布 ----------
+    warmup_traces = min(warmup_traces, total_budget - 1)
+    if warmup_traces > 0:
+        warmup_params = SamplingParams(
+            n=warmup_traces,
+            temperature=temperature,
+            top_p=0.95,
+            max_tokens=max_tokens,
+            logprobs=logprobs,
         )
-        # 把两条字符串直接写进单条 trace 字典
+        warmup_outputs = llm.generate([prompt], warmup_params)
+        warmup_result = process_fn_warmup(warmup_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
+        # 假设 warmup_result 中包含 'min_confs' 列表
+        if 'min_confs' in warmup_result and len(warmup_result['min_confs']) > 0:
+            conf_bar = float(np.percentile(warmup_result['min_confs'], confidence_percentile))
+        else:
+            conf_bar = 0.0
+    else:
+        conf_bar = 0.0
+
+    # ---------- final 阶段: 使用估计的阈值进行带 enable_conf 的生成 ----------
+    final_n = max(1, total_budget - warmup_traces)
+    final_params = SamplingParams(
+        n=final_n,
+        temperature=temperature,
+        top_p=0.95,
+        max_tokens=max_tokens,
+        logprobs=logprobs,
+        extra_args={'enable_conf': True, 'window_size': window_size, 'threshold': conf_bar}
+    )
+    final_outputs = llm.generate([prompt], final_params)
+    final_result = process_fn(final_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
+
+    def format_trace(trace):
+        pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
+        group_conf_str = " ".join(f"{t}:{s:.4f}" for t, s in trace.get('group_conf_tokens', []))
         trace['token_confidence'] = pairs_str
         trace['group_confidence'] = group_conf_str
-        traces.append(trace)
+        return trace
 
-    return traces 
+    # ---------- 合并 warmup 和 final traces 并格式化 ----------
+    warm_traces = warmup_result.get('traces', []) if warmup_result else []
+    final_traces = final_result.get('traces', []) if final_result else []
+    warm_traces = warm_traces or []
+    final_traces = final_traces or []
+    formatted_warm = [format_trace(t) for t in warm_traces]
+    formatted_final = [format_trace(t) for t in final_traces]
+    traces = formatted_warm + formatted_final
+    return traces
                           
 # ---------------------------
 # main pipeline (no jsonl output, single Excel)
