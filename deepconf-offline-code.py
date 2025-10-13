@@ -267,7 +267,7 @@ def run_pipeline(args):
                         start_check = time.time()
                         try:
                             # 如果 check_correctness 本身在内部打印或捕获了输出，它会在返回 dict 中包含 result/exception 等字段
-                            check_res = check_correctness(problem, completion=completion, timeout=timeout, completion_id=None)
+                            check_res = check_correctness(problem, completion=completion, timeout=timeout)
                             check_detail = dict(check_res) if isinstance(check_res, dict) else {"passed": bool(check_res)}
                             # augment detail with the constructed program for debugging
                             check_detail["constructed_program"] = constructed_program
