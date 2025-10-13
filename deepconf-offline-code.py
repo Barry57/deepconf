@@ -37,35 +37,10 @@ def make_token_conf_pairs(tokens, confs):
         pairs.append(f"{token_str}:{confs[i]:.4f}")
     return ",".join(pairs)
 
-def clean_generated_code(text: str) -> str:
-    """
-    删除从第一个包含 __name__ 的非注释非空行开始的该行及之后所有行，
-    并在返回的剩余部分中移除所有空行和以 # 开头的注释行。
-    若未找到这样的 __name__ 行，则仅删除所有空行和以 # 开头的注释行并返回。
-    """
-    if not text:
-        return ""
-    lines = text.splitlines()
-    cut_idx = None
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-        if not stripped or stripped.startswith('#'):
-            continue
-        if '__name__' in stripped:
-            cut_idx = i
-            break
-    if cut_idx is None:
-        kept = lines
-    else:
-        kept = lines[:cut_idx]
-    # 删除保留部分中的空行和以 # 开头的注释行
-    filtered = []
-    for line in kept:
-        s = line.strip()
-        if not s or s.startswith('#'):
-            continue
-        filtered.append(line)
-    return "\n".join(filtered)
+def filter_code(completion: str) -> str:
+    # The program tends to overwrite, we only take the first function
+    completion = completion.lstrip("\n")
+    return completion.split("\n\n")[0]
 
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
@@ -247,17 +222,43 @@ def run_pipeline(args):
         gen_time = time.time() - gen_start
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
 
-        # per-trace processing
         for tr in traces:
-            raw_text        = tr.get("text") or ""               # 原始
-            cleaned_text    = clean_generated_code(raw_text)     # 给判分用
+            raw_text        = tr.get("text") or "" 
+            cleaned_text    = filter_code(raw_text)
             group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
             min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")            
 
             # is_correct: exec check if requested and available; else string compare against ref_answer if present; else None
             is_corr = None
             if args.use_exec_check and problems is not None and check_correctness is not None:
-                is_corr = 1 if pass_cache.get(cleaned_text, False) else 0
+                # 使用 task_id + cleaned_text 作为缓存键，避免不同任务间复用同一文本的结果
+                cache_key = f"{task_id}||{cleaned_text}"
+                cached = pass_cache.get(cache_key)
+                if cached is not None:
+                    is_corr = 1 if cached else 0
+                else:
+                    # 找到对应 problem
+                    problem = None
+                    if isinstance(problems, dict):
+                        problem = problems.get(task_id)
+                    else:
+                        for p in problems:
+                            if p.get("task_id") == task_id or p.get("id") == task_id:
+                                problem = p
+                                break
+            
+                    passed = False
+                    if problem is not None:
+                        timeout = getattr(args, "exec_timeout", getattr(args, "timeout", 5))
+                        try:
+                            res = check_correctness(problem, completion=cleaned_text, timeout=timeout)
+                            passed = bool(res.get("passed", False))
+                        except Exception:
+                            passed = False
+                    pass_cache[cache_key] = bool(passed)
+                    is_corr = 1 if passed else 0
+            elif ref_answer is not None:
+                is_corr = 1 if (cleaned_text.strip() == ref_answer.strip()) else 0
 
             all_rows.append({
                 "task_id": task_id,
