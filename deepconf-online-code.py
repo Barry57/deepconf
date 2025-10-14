@@ -202,7 +202,11 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
     final_traces = final_traces or []
     formatted_warm = [format_trace(t) for t in warm_traces]
     formatted_final = [format_trace(t) for t in final_traces]
-    traces = formatted_warm + formatted_final
+    for t in formatted_warm:
+        t['_stage'] = 'warmup'
+    for t in formatted_final:
+        t['_stage'] = 'final' 
+    traces = formatted_warm + formatted_final          
     return traces
                           
 # ---------------------------
@@ -279,10 +283,11 @@ def run_pipeline(args):
             cleaned_text    = filter_code(raw_text)
             group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
             min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")
-            if tr in warm_traces:
-                trace_type = "warmup"
+            stage = tr.get('_stage', 'final')
+            if stage == 'warmup':
+                trace_type = 'warmup'
             else:
-                trace_type = "stop" if tr.get("stopped", False) else "full"
+                trace_type = 'stop' if tr.get('stopped', False) else 'full'
 
             # is_correct: exec check if requested and available; else string compare against ref_answer if present; else None
             is_corr = None
