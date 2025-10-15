@@ -1,19 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-run_humaneval_traces_to_excel.py
-
-Usage example:
-  python run_humaneval_traces_to_excel.py --model Qwen/Qwen3-Coder-30B-A3B-Instruct \
-    --out /dbfs/FileStore/deepconf_res/humaneval_traces.xlsx \
-    --max_tasks 164 --traces_per_task 200 --tp_size 1 --use_exec_check
-
-Notes:
-- If --dataset not provided, the script downloads HumanEval.jsonl.gz from the OpenAI human-eval repo.
-- If human-eval or vllm not available, script still runs but generation/check features will raise at runtime.
-"""
-
 import os
 import sys
 import time
@@ -135,7 +119,7 @@ def stream_jsonl(filename):
 # ---------------------------
 from typing import Optional
 def generate_traces_vllm(model_path, prompt, tokenizer=None,
-                         n_samples=200, temperature=0.6, max_tokens=60000,
+                         temperature=0.6, max_tokens=60000,
                          logprobs=20, tp_size=1, window_size=1024, stride=None,
                          save_json_path: Optional[str]=None,
                          warmup_traces: int = 8,
@@ -260,13 +244,11 @@ def run_pipeline(args):
         if isinstance(ref_answer, list) and ref_answer:
             ref_answer = ref_answer[0]
 
-        print(f"[{idx+1}/{max_tasks}] Generating {args.traces_per_task} traces for task {task_id} ...")
         gen_start = time.time()
         traces = generate_traces_vllm(
             args.model,
             prompt,
             tokenizer,
-            n_samples=args.traces_per_task,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
             logprobs=args.logprobs,
@@ -433,7 +415,6 @@ def parse_args():
     p.add_argument("--max_tasks", type=int, default=164, help="max number of tasks to process")
     p.add_argument("--task_idx", type=int, nargs='+', default=None,
                    help="只想跑哪几道题，0-based，可写单个或多个，例：--task_idx 11  或  --task_idx 11 15 23")
-    p.add_argument("--traces_per_task", type=int, default=200, help="number of traces to generate per task")
     p.add_argument("--temperature", type=float, default=0.6)
     p.add_argument("--max_tokens", type=int, default=60000)
     p.add_argument("--logprobs", type=int, default=20)
@@ -452,12 +433,9 @@ def parse_args():
 # ---------------------------
 def main():
     args = parse_args()
-    # map traces_per_task onto generation param name used in code
-    args.traces_per_task = int(args.traces_per_task)
     args.max_tasks = int(args.max_tasks)
 
     # map simpler names for generate wrapper
-    args.n_samples = args.traces_per_task
     args.out = args.out
 
     # run pipeline
