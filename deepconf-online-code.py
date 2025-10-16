@@ -21,6 +21,10 @@ def make_token_conf_pairs(tokens, confs):
         pairs.append(f"{token_str}:{confs[i]:.4f}")
     return ",".join(pairs)
 
+def extract_code(r1_text: str) -> str:
+    match = re.search(r'```python\n(.*?)\n```', r1_text, flags=re.S)
+    return match.group(1).strip() if match else ""
+
 def filter_code(completion: str) -> str:
     # The program tends to overwrite, we only take the first function
     completion = completion.lstrip("\n")
@@ -254,7 +258,7 @@ def run_pipeline(args):
             logprobs=args.logprobs,
             tp_size=args.tp_size,
             window_size=args.window_size,
-            warmup_traces=args.window_size, 
+            warmup_traces=args.warmup_traces, 
             total_budget=args.total_budget,
         )
         gen_time = time.time() - gen_start
@@ -262,7 +266,8 @@ def run_pipeline(args):
 
         for tr in traces:
             raw_text        = tr.get("text") or "" 
-            cleaned_text    = filter_code(raw_text)
+            #cleaned_text    = filter_code(raw_text)
+            cleaned_text    = extract_code(raw_text)
             group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
             min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")
             stage = tr.get('_stage', 'final')
