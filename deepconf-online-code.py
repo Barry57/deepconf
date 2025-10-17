@@ -167,10 +167,9 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
     # ---------- 循环阶段: 持续采样直到 full 数达标或预算耗尽 ----------
     collected_full = 0
     budget_left = total_budget - warmup_traces
-    final_traces = []
+    raw_final_traces = []          # 先存原始 traces
 
-    while budget_left > 0 and collected_full < (reach_traces or float('inf')):
-        # 每次批量大小：可以一次多采点，这里简单起见一次采 10 条，可调
+    while budget_left > 0:
         batch_n = min(10, budget_left)
         batch_params = SamplingParams(
             n=batch_n,
@@ -183,19 +182,16 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
         batch_outputs = llm.generate([prompt], batch_params)
         batch_result = process_batch_results(batch_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
         batch_traces = batch_result.get('traces', []) or []
+        raw_final_traces.extend(batch_traces)
 
-        # 格式化并分类
+        # 统计本次 batch 里 full 的数量
         for t in batch_traces:
-            fmt_t = format_trace(t)
-            fmt_t['_stage'] = 'final'
-            trace_type = 'stop' if fmt_t.get('stopped', False) else 'full'
-            fmt_t['trace_type'] = trace_type
-            final_traces.append(fmt_t)
-            if trace_type == 'full':
+            if not t.get('stopped', False)
                 collected_full += 1
+
         budget_left -= batch_n
 
-        # 提前退出条件
+        # 提前终止
         if reach_traces and collected_full >= reach_traces:
             break
 
