@@ -127,7 +127,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
                          temperature=0.6, max_tokens=60000,
                          logprobs=20, tp_size=1, window_size=1024, stride=None,
                          save_json_path: Optional[str]=None,
-                         warmup_traces: int = 8,
+                         warmup_traces: int = 8, reach_traces = 50，
                          total_budget: int = 100,
                          confidence_percentile: float = 10.0):
     if LLM is None or SamplingParams is None:
@@ -169,7 +169,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
     budget_left = total_budget - warmup_traces
     final_traces = []
 
-    while budget_left > 0 and collected_full < (args.reach_traces or float('inf')):
+    while budget_left > 0 and collected_full < (reach_traces or float('inf')):
         # 每次批量大小：可以一次多采点，这里简单起见一次采 10 条，可调
         batch_n = min(10, budget_left)
         batch_params = SamplingParams(
@@ -196,7 +196,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
         budget_left -= batch_n
 
         # 提前退出条件
-        if args.reach_traces and collected_full >= args.reach_traces:
+        if reach_traces and collected_full >= reach_traces:
             break
 
     def format_trace(trace):
@@ -282,6 +282,7 @@ def run_pipeline(args):
             tp_size=args.tp_size,
             window_size=args.window_size,
             warmup_traces=args.warmup_traces, 
+            reach_traces=args.reach_traces,
             total_budget=args.total_budget,
         )
         gen_time = time.time() - gen_start
