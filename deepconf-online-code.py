@@ -167,7 +167,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
     # ---------- 循环阶段: 持续采样直到 full 数达标或预算耗尽 ----------
     collected_full = 0
     budget_left = total_budget - warmup_traces
-    raw_final_traces = []          # 先存原始 traces
+    final_traces = []
 
     while budget_left > 0:
         batch_n = min(10, budget_left)
@@ -179,10 +179,10 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
             logprobs=logprobs,
             extra_args={'enable_conf': True, 'window_size': window_size, 'threshold': conf_bar}
         )
-        batch_outputs = llm.generate([prompt], batch_params)
-        batch_result = process_batch_results(batch_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
+        final_outputs = llm.generate([prompt], batch_params)
+        final_result = process_batch_results(final_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
         batch_traces = batch_result.get('traces', []) or []
-        raw_final_traces.extend(batch_traces)
+        final_traces.extend(batch_traces)
 
         # 统计本次 batch 里 full 的数量
         for t in batch_traces:
