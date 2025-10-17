@@ -186,7 +186,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
 
         # 统计本次 batch 里 full 的数量
         for t in batch_traces:
-            if not t.get('stopped', False)
+            if not t.get('stopped', False):
                 collected_full += 1
 
         budget_left -= batch_n
