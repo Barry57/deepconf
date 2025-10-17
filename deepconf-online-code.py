@@ -181,7 +181,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
         )
         final_outputs = llm.generate([prompt], batch_params)
         final_result = process_batch_results(final_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
-        batch_traces = batch_result.get('traces', []) or []
+        batch_traces = final_result.get('traces', []) or []
         final_traces.extend(batch_traces)
 
         # 统计本次 batch 里 full 的数量
