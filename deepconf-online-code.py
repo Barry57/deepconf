@@ -164,18 +164,40 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
     else:
         conf_bar = 0.0
 
-    # ---------- final 阶段: 使用估计的阈值进行带 enable_conf 的生成 ----------
-    final_n = max(1, total_budget - warmup_traces)
-    final_params = SamplingParams(
-        n=final_n,
-        temperature=temperature,
-        top_p=0.95,
-        max_tokens=max_tokens,
-        logprobs=logprobs,
-        extra_args={'enable_conf': True, 'window_size': window_size, 'threshold': conf_bar}
-    )
-    final_outputs = llm.generate([prompt], final_params)
-    final_result = process_batch_results(final_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
+    # ---------- 循环阶段: 持续采样直到 full 数达标或预算耗尽 ----------
+    collected_full = 0
+    budget_left = total_budget - warmup_traces
+    final_traces = []
+
+    while budget_left > 0 and collected_full < (args.reach_traces or float('inf')):
+        # 每次批量大小：可以一次多采点，这里简单起见一次采 10 条，可调
+        batch_n = min(10, budget_left)
+        batch_params = SamplingParams(
+            n=batch_n,
+            temperature=temperature,
+            top_p=0.95,
+            max_tokens=max_tokens,
+            logprobs=logprobs,
+            extra_args={'enable_conf': True, 'window_size': window_size, 'threshold': conf_bar}
+        )
+        batch_outputs = llm.generate([prompt], batch_params)
+        batch_result = process_batch_results(batch_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
+        batch_traces = batch_result.get('traces', []) or []
+
+        # 格式化并分类
+        for t in batch_traces:
+            fmt_t = format_trace(t)
+            fmt_t['_stage'] = 'final'
+            trace_type = 'stop' if fmt_t.get('stopped', False) else 'full'
+            fmt_t['trace_type'] = trace_type
+            final_traces.append(fmt_t)
+            if trace_type == 'full':
+                collected_full += 1
+        budget_left -= batch_n
+
+        # 提前退出条件
+        if args.reach_traces and collected_full >= args.reach_traces:
+            break
 
     def format_trace(trace):
         pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
@@ -420,14 +442,14 @@ def parse_args():
     p.add_argument("--dataset", type=str, default=None, help="jsonl dataset path; if omitted, auto-download HumanEval")
     p.add_argument("--out", type=str, required=True, help="output path (xlsx preferred) e.g. /dbfs/FileStore/.../humaneval_traces.xlsx")
     p.add_argument("--max_tasks", type=int, default=164, help="max number of tasks to process")
-    p.add_argument("--task_idx", type=int, nargs='+', default=None,
-                   help="只想跑哪几道题，0-based，可写单个或多个，例：--task_idx 11  或  --task_idx 11 15 23")
+    p.add_argument("--task_idx", type=int, nargs='+', default=None, help="只想跑哪几道题，0-based，可写单个或多个，例：--task_idx 11  或  --task_idx 11 15 23")
     p.add_argument("--temperature", type=float, default=0.6)
     p.add_argument("--max_tokens", type=int, default=60000)
     p.add_argument("--logprobs", type=int, default=20)
     p.add_argument("--tp_size", type=int, default=1)
     p.add_argument("--window_size", type=int, default=1024)
     p.add_argument("--warmup_traces", type=int, default=8)
+    p.add_argument("--reach_traces", type=int, default=50, help="除 warmup 外，要收集多少条 'full' trace 才停（优先级高于 total_budget 的剩余量）")
     p.add_argument("--total_budget", type=int, default=100)
     p.add_argument("--stride", type=int, default=None)
     p.add_argument("--use_exec_check", action="store_true", help="use human-eval check_correctness for correctness labels")
