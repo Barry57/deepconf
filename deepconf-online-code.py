@@ -123,14 +123,21 @@ def stream_jsonl(filename):
 #  generation wrapper
 # ---------------------------
 from typing import Optional
-def generate_traces_vllm(model_path, prompt, tokenizer=None,
-                         temperature=0.6, max_tokens=60000,
-                         logprobs=20, tp_size=1, window_size=1024, stride=None,
-                         save_json_path: Optional[str]=None,
-                         warmup_traces: int = 8,
-                         reach_traces = 50,
-                         total_budget: int = 100,
-                         confidence_percentile: float = 10.0):
+def generate_traces_vllm(
+        model_path,
+        prompt,
+        tokenizer=None,
+        temperature=0.6,
+        max_tokens=60000,
+        logprobs=20,
+        tp_size=1,
+        window_size=1024,
+        stride=None,
+        save_json_path: Optional[str] = None,
+        warmup_traces: int = 8,
+        reach_traces: int = 50,
+        total_budget: int = 100,
+        confidence_percentile: float = 10.0):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
 
@@ -143,9 +150,7 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
         gpu_memory_utilization=0.8,
     )
 
-    traces = []
-
-    # ---------- warmup 阶段: 用较小样本估计置信度分布 ----------
+    # ---------- warmup ----------
     warmup_traces = min(warmup_traces, total_budget - 1)
     if warmup_traces > 0:
         warmup_params = SamplingParams(
@@ -156,8 +161,8 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
             logprobs=logprobs,
         )
         warmup_outputs = llm.generate([prompt], warmup_params)
-        warmup_result = process_batch_results(warmup_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
-        # 假设 warmup_result 中包含 'min_confs' 列表
+        warmup_result = process_batch_results(
+            warmup_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
         if 'min_confs' in warmup_result and len(warmup_result['min_confs']) > 0:
             conf_bar = float(np.percentile(warmup_result['min_confs'], confidence_percentile))
         else:
@@ -165,11 +170,11 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
     else:
         conf_bar = 0.0
 
-    # ---------- 循环阶段----------
+    # ---------- final：循环采「full 子段」 ----------
     collected_full = 0
     budget_left = total_budget - warmup_traces
-    raw_final_traces = []
-    
+    raw_final_traces = []          # 1. 攒原始样本（含子段）
+
     while budget_left > 0 and collected_full < reach_traces:
         batch_n = min(10, budget_left)
         batch_params = SamplingParams(
@@ -184,13 +189,14 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
         final_result = process_batch_results(final_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
         batch_traces = final_result.get('traces', []) or []
         raw_final_traces.extend(batch_traces)
+
+        # 2. 拆完段再数「full 子段」
         for t in batch_traces:
             if not t.get('stopped', False):
                 collected_full += 1
-    
+
         budget_left -= batch_n
-    
-        # 早停：full 已够
+        # 3. 早停：段数已够
         if collected_full >= reach_traces:
             break
 
@@ -201,18 +207,15 @@ def generate_traces_vllm(model_path, prompt, tokenizer=None,
         trace['group_confidence'] = group_conf_str
         return trace
 
-    # ---------- 合并 warmup 和 final traces 并格式化 ----------
+    # ---------- 合并：用 raw_final_traces，别再覆盖 ----------
     warm_traces = warmup_result.get('traces', []) if warmup_result else []
-    final_traces = final_result.get('traces', []) if final_result else []
-    warm_traces = warm_traces or []
-    final_traces = final_traces or []
     formatted_warm = [format_trace(t) for t in warm_traces]
-    formatted_final = [format_trace(t) for t in final_traces]
+    formatted_final = [format_trace(t) for t in raw_final_traces]
     for t in formatted_warm:
         t['_stage'] = 'warmup'
     for t in formatted_final:
-        t['_stage'] = 'final' 
-    traces = formatted_warm + formatted_final          
+        t['_stage'] = 'final'
+    traces = formatted_warm + formatted_final
     return traces
                           
 # ---------------------------
