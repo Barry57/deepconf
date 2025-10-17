@@ -1,20 +1,5 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-
-"""
-run_humaneval_traces_to_excel.py
-
-Usage example:
-  python run_humaneval_traces_to_excel.py --model Qwen/Qwen3-Coder-30B-A3B-Instruct \
-    --out /dbfs/FileStore/deepconf_res/humaneval_traces.xlsx \
-    --max_tasks 164 --traces_per_task 200 --tp_size 1 --use_exec_check
-
-Notes:
-- If --dataset not provided, the script downloads HumanEval.jsonl.gz from the OpenAI human-eval repo.
-- If human-eval or vllm not available, script still runs but generation/check features will raise at runtime.
-"""
-
 import os
+import re
 import sys
 import time
 import json
