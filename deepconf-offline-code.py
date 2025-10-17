@@ -37,10 +37,9 @@ def make_token_conf_pairs(tokens, confs):
         pairs.append(f"{token_str}:{confs[i]:.4f}")
     return ",".join(pairs)
 
-def filter_code(completion: str) -> str:
-    # The program tends to overwrite, we only take the first function
-    completion = completion.lstrip("\n")
-    return completion.split("\n\n")[0]
+def extract_code(r1_text: str) -> str:
+    match = re.search(r'```python\n(.*?)\n```', r1_text, flags=re.S)
+    return match.group(1).strip() if match else ""
 
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
@@ -231,7 +230,7 @@ def run_pipeline(args):
 
         for tr in traces:
             raw_text        = tr.get("text") or "" 
-            cleaned_text    = filter_code(raw_text)
+            cleaned_text    = extract_code(raw_text)
             group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
             min_group_mean = float(np.min(group_scores)) if group_scores else float("-inf")            
 
@@ -376,8 +375,7 @@ def parse_args():
     p.add_argument("--dataset", type=str, default=None, help="jsonl dataset path; if omitted, auto-download HumanEval")
     p.add_argument("--out", type=str, required=True, help="output path (xlsx preferred) e.g. /dbfs/FileStore/.../humaneval_traces.xlsx")
     p.add_argument("--max_tasks", type=int, default=164, help="max number of tasks to process")
-    p.add_argument("--task_idx", type=int, nargs='+', default=None,
-                 help="只想跑哪几道题，0-based，可写单个或多个，例：--task_idx 11  或  --task_idx 11 15 23")
+    p.add_argument("--task_idx", type=int, nargs='+', default=None, help="只想跑哪几道题，0-based，可写单个或多个，例：--task_idx 11  或  --task_idx 11 15 23")
     p.add_argument("--traces_per_task", type=int, default=200, help="number of traces to generate per task")
     p.add_argument("--temperature", type=float, default=0.6)
     p.add_argument("--max_tokens", type=int, default=60000)
