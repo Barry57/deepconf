@@ -246,7 +246,7 @@ def run_pipeline(args):
                         is_corr = 0
                     else:
                         # construct the exact check_program here to record it
-                        completion = cleaned_text  # 或者 raw_text，视你想执行的内容
+                        completion = cleaned_text
                         constructed_program = (
                             problem.get("prompt", "") + completion + "\n" +
                             problem.get("test", "") + "\n" +
@@ -289,7 +289,8 @@ def run_pipeline(args):
             # append row with detailed check info for later inspection
             all_rows.append({
                 "task_id": task_id,
-                "extracted_answer": raw_text,
+                "full_answer": raw_text,
+                "extracted_answer": cleaned_text,
                 "token_and_conf": tr.get('token_confidence'),
                 "group_conf": tr.get('group_confidence'),
                 "min_group_mean": min_group_mean,
