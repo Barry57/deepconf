@@ -176,7 +176,7 @@ def generate_traces_vllm(
     raw_final_traces = []          # 1. 攒原始样本（含子段）
 
     while budget_left > 0 and collected_full < reach_traces:
-        batch_n = min(1, budget_left)
+        batch_n = min(100, budget_left)
         batch_params = SamplingParams(
             n=batch_n,
             temperature=temperature,
