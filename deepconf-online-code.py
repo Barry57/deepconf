@@ -282,6 +282,7 @@ def run_pipeline(args):
             warmup_traces=args.warmup_traces, 
             reach_traces=args.reach_traces,
             total_budget=args.total_budget,
+            confidence_percentile = args.percentage,
         )
         gen_time = time.time() - gen_start
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
@@ -450,6 +451,7 @@ def parse_args():
     p.add_argument("--warmup_traces", type=int, default=8)
     p.add_argument("--reach_traces", type=int, default=50, help="除 warmup 外，要收集多少条 'full' trace 才停（优先级高于 total_budget 的剩余量）")
     p.add_argument("--total_budget", type=int, default=100)
+    p.add_argument("--percentage", type=int, default=10)
     p.add_argument("--stride", type=int, default=None)
     p.add_argument("--use_exec_check", action="store_true", help="use human-eval check_correctness for correctness labels")
     p.add_argument("--exec_timeout", type=float, default=3.0)
