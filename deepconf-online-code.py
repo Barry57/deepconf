@@ -393,6 +393,8 @@ def run_pipeline(args):
     warmup_correct = defaultdict(int)
     full_correct   = defaultdict(int)
 
+    # 先一次性把 full 类型的行按题号分组
+    full_groups = defaultdict(list)
     for _, row in df.iterrows():
         tid  = row["task_id"]
         ic   = row["is_correct"] or 0
@@ -401,9 +403,11 @@ def run_pipeline(args):
         if ttyp == "warmup":
             warmup_correct[tid] += ic
         elif ttyp == "full":
-            # 只取每题前 100 条 full
-            if full_correct[tid] < 100:
-                full_correct[tid] += ic
+            full_groups[tid].append(ic)
+
+    # 每组只取前 100 条再求和
+    for tid, corr_list in full_groups.items():
+        full_correct[tid] = sum(corr_list[:100])
 
     # 打印
     for tid in sorted(set(warmup_correct) | set(full_correct)):
