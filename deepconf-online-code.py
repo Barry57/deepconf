@@ -396,6 +396,7 @@ def run_pipeline(args):
         if row["trace_type"] == "warmup":
             warmup_correct[tid] += ic
         elif row["trace_type"] == "full":
+            pass
     full_groups = defaultdict(list)
     for row in all_rows:
         if row["trace_type"] == "full":
