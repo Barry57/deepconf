@@ -10,6 +10,7 @@ import pickle
 from datetime import datetime
 from collections import defaultdict
 import numpy as np
+import pandas as pd
 from helper_trans import process_batch_results
 
 def make_token_conf_pairs(tokens, confs):
