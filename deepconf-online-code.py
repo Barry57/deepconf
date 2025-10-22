@@ -387,26 +387,27 @@ def run_pipeline(args):
     # final write
     if all_rows:
         flush_to_disk_partial(all_rows, args.out, header_mode=True)
+    print("Done. Output written to:", args.out)
+    df = pd.read_excel(args.out)
+    warmup_correct = defaultdict(int)
+    full_correct   = defaultdict(int)
 
-    warmup_correct = defaultdict(int)   # task_id -> sum(is_correct) for warmup
-    full_correct   = defaultdict(int)   # task_id -> sum(is_correct) for full (top-100)
-    for row in all_rows:
-        tid = row["task_id"]
-        ic  = row["is_correct"] or 0
-        if row["trace_type"] == "warmup":
+    for _, row in df.iterrows():
+        tid  = row["task_id"]
+        ic   = row["is_correct"] or 0
+        ttyp = row["trace_type"]
+
+        if ttyp == "warmup":
             warmup_correct[tid] += ic
-        elif row["trace_type"] == "full":
-            pass
-    full_groups = defaultdict(list)
-    for row in all_rows:
-        if row["trace_type"] == "full":
-            full_groups[row["task_id"]].append(row["is_correct"] or 0)
-    for tid, corr_list in full_groups.items():
-        full_correct[tid] = sum(corr_list[:100])   # 只取前 100 条
+        elif ttyp == "full":
+            # 只取每题前 100 条 full
+            if full_correct[tid] < 100:
+                full_correct[tid] += ic
+
+    # 打印
     for tid in sorted(set(warmup_correct) | set(full_correct)):
         print(f"[{tid}]  warmup correct = {warmup_correct[tid]},  "
               f"full correct (top-100) = {full_correct[tid]}")
-    print("Done. Output written to:", args.out)
 
 # ---------------------------
 # flush helper: write or append to excel/csv
