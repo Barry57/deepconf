@@ -147,7 +147,7 @@ def generate_traces_vllm(
         tensor_parallel_size=tp_size,
         enable_prefix_caching=False,
         trust_remote_code=True,
-        max_model_len=32768,
+        max_model_len=2500,
         gpu_memory_utilization=0.8,
     )
 
