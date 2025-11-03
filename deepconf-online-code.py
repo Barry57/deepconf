@@ -130,7 +130,7 @@ def generate_traces_vllm(
         tokenizer=None,
         temperature=0.6,
         max_tokens=60000,
-        max_model_len=2500
+        max_model_len=2500,
         logprobs=20,
         tp_size=1,
         window_size=1024,
