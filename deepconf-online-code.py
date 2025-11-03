@@ -130,6 +130,7 @@ def generate_traces_vllm(
         tokenizer=None,
         temperature=0.6,
         max_tokens=60000,
+        max_model_len=2500
         logprobs=20,
         tp_size=1,
         window_size=1024,
@@ -147,7 +148,7 @@ def generate_traces_vllm(
         tensor_parallel_size=tp_size,
         enable_prefix_caching=False,
         trust_remote_code=True,
-        max_model_len=2500,
+        max_model_len=max_model_len,
         gpu_memory_utilization=0.8,
     )
 
@@ -277,6 +278,7 @@ def run_pipeline(args):
             tokenizer,
             temperature=args.temperature,
             max_tokens=args.max_tokens,
+            max_model_len=args.max_model_len,
             logprobs=args.logprobs,
             tp_size=args.tp_size,
             window_size=args.window_size,
@@ -463,6 +465,7 @@ def parse_args():
     p.add_argument("--task_idx", type=int, nargs='+', default=None, help="只想跑哪几道题，0-based，可写单个或多个，例：--task_idx 11  或  --task_idx 11 15 23")
     p.add_argument("--temperature", type=float, default=0.6)
     p.add_argument("--max_tokens", type=int, default=60000)
+    p.add_argument("--max_model_len", type=int, default=10000)
     p.add_argument("--logprobs", type=int, default=20)
     p.add_argument("--tp_size", type=int, default=1)
     p.add_argument("--window_size", type=int, default=1024)
