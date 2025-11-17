@@ -140,7 +140,7 @@ def generate_traces_vllm(
         reach_traces: int = 50,
         total_budget: int = 100,
         confidence_percentile: float = 10.0,
-        llm_in = None):
+        llm = None):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
 
@@ -154,7 +154,7 @@ def generate_traces_vllm(
             max_tokens=max_tokens,
             logprobs=logprobs,
         )
-        warmup_outputs = llm_in.generate([prompt], warmup_params)
+        warmup_outputs = llm.generate([prompt], warmup_params)
         warmup_result = process_batch_results(
             warmup_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
         if 'min_confs' in warmup_result and len(warmup_result['min_confs']) > 0:
@@ -287,7 +287,7 @@ def run_pipeline(args):
             reach_traces=args.reach_traces,
             total_budget=args.total_budget,
             confidence_percentile = args.percentage,
-            llm_in = llm
+            llm = llm
         )
         gen_time = time.time() - gen_start
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
