@@ -225,7 +225,7 @@ def run_pipeline(args):
     llm = LLM(
         model=args.model,
         tensor_parallel_size=args.tp_size,
-        enable_prefix_caching=True,
+        enable_prefix_caching=False,
         trust_remote_code=True,
         max_model_len=args.max_model_len,
         gpu_memory_utilization=0.8,
