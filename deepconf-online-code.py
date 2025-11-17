@@ -120,15 +120,6 @@ def stream_jsonl(filename):
                 if line.strip():
                     yield json.loads(line)
 
-llm = LLM(
-    model=model_path,
-    tensor_parallel_size=tp_size,
-    enable_prefix_caching=False,
-    trust_remote_code=True,
-    max_model_len=max_model_len,
-    gpu_memory_utilization=0.8,
-)
-
 # ---------------------------
 #  generation wrapper
 # ---------------------------
@@ -230,7 +221,16 @@ def run_pipeline(args):
         dataset_path = args.dataset
     else:
         dataset_path = maybe_download_humaneval(target_dir=".", filename="HumanEval.jsonl")
-
+    
+    llm = LLM(
+        model=args.model,
+        tensor_parallel_size=args.tp_size,
+        enable_prefix_caching=True,
+        trust_remote_code=True,
+        max_model_len=args.max_model_len,
+        gpu_memory_utilization=0.8,
+    )
+    
     # load dataset lines
     dataset = []
     for item in stream_jsonl(dataset_path):
