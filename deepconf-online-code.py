@@ -120,6 +120,15 @@ def stream_jsonl(filename):
                 if line.strip():
                     yield json.loads(line)
 
+llm = LLM(
+    model=model_path,
+    tensor_parallel_size=tp_size,
+    enable_prefix_caching=False,
+    trust_remote_code=True,
+    max_model_len=max_model_len,
+    gpu_memory_utilization=0.8,
+)
+
 # ---------------------------
 #  generation wrapper
 # ---------------------------
@@ -139,18 +148,10 @@ def generate_traces_vllm(
         warmup_traces: int = 8,
         reach_traces: int = 50,
         total_budget: int = 100,
-        confidence_percentile: float = 10.0):
+        confidence_percentile: float = 10.0,
+        llm = llm):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
-
-    llm = LLM(
-        model=model_path,
-        tensor_parallel_size=tp_size,
-        enable_prefix_caching=False,
-        trust_remote_code=True,
-        max_model_len=max_model_len,
-        gpu_memory_utilization=0.8,
-    )
 
     # ---------- warmup ----------
     warmup_traces = min(warmup_traces, total_budget - 1)
