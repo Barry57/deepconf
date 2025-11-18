@@ -372,17 +372,29 @@ def run_pipeline(args):
                     check_detail = {"method": "string_compare", "error": str(e)}
             
             # append row with detailed check info for later inspection
-            all_rows.append({
-                "task_id": task_id,
-                "full_answer": raw_text,
-                "extracted_answer": cleaned_text,
-                "token_and_conf": tr.get('token_confidence'),
-                "group_conf": tr.get('group_confidence'),
-                "min_group_mean": min_group_mean,
-                "is_correct": is_corr,
-                "check_detail": check_detail,
-                "trace_type": trace_type,
-            })
+            if args.use_exec_check:
+                all_rows.append({
+                    "task_id": task_id,
+                    "full_answer": raw_text,
+                    "extracted_answer": cleaned_text,
+                    "token_and_conf": tr.get('token_confidence'),
+                    "group_conf": tr.get('group_confidence'),
+                    "min_group_mean": min_group_mean,
+                    "is_correct": is_corr,
+                    "check_detail": check_detail,
+                    "trace_type": trace_type,
+                })
+            else:
+                all_rows.append({
+                    "task_id": task_id,
+                    "full_answer": raw_text,
+                    "extracted_answer": cleaned_text,
+                    "token_and_conf": tr.get('token_confidence'),
+                    "group_conf": tr.get('group_confidence'),
+                    "min_group_mean": min_group_mean,
+                    "check_detail": check_detail,
+                    "trace_type": trace_type,
+                })
     # final write
     if all_rows:
         flush_to_disk_partial(all_rows, args.out, header_mode=True)
