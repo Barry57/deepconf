@@ -381,7 +381,7 @@ def run_pipeline(args):
                     "group_conf": tr.get('group_confidence'),
                     "min_group_mean": min_group_mean,
                     "is_correct": is_corr,
-                    "check_detail": check_detail,
+                    #"check_detail": check_detail,
                     "trace_type": trace_type,
                 })
             else:
@@ -392,7 +392,7 @@ def run_pipeline(args):
                     "token_and_conf": tr.get('token_confidence'),
                     "group_conf": tr.get('group_confidence'),
                     "min_group_mean": min_group_mean,
-                    "check_detail": check_detail,
+                    #"check_detail": check_detail,
                     "trace_type": trace_type,
                 })
     # final write
@@ -457,9 +457,9 @@ def flush_to_disk_partial(rows, out_path, header_mode=True):
         import csv
         with open(csv_path, "a", encoding="utf-8", newline="") as f:
             if 'is_correct' in rows.values():
-                writer = csv.DictWriter(f, fieldnames=["task_id","full_answer","extracted_answer","token_and_conf","group_conf","min_group_mean","is_correct","check_detail","trace_type"])
+                writer = csv.DictWriter(f, fieldnames=["task_id","full_answer","extracted_answer","token_and_conf","group_conf","min_group_mean","is_correct","trace_type"])
             else:
-                writer = csv.DictWriter(f, fieldnames=["task_id","full_answer","extracted_answer","token_and_conf","group_conf","min_group_mean","check_detail","trace_type"])
+                writer = csv.DictWriter(f, fieldnames=["task_id","full_answer","extracted_answer","token_and_conf","group_conf","min_group_mean","trace_type"])
             if write_header:
                 writer.writeheader()
             for r in rows:
