@@ -403,26 +403,27 @@ def run_pipeline(args):
     warmup_correct = defaultdict(int)
     full_correct   = defaultdict(int)
 
-    # 先一次性把 full 类型的行按题号分组
-    full_groups = defaultdict(list)
-    for _, row in df.iterrows():
-        tid  = row["task_id"]
-        ic   = row["is_correct"] or 0
-        ttyp = row["trace_type"]
-
-        if ttyp == "warmup":
-            warmup_correct[tid] += ic
-        elif ttyp == "full":
-            full_groups[tid].append(ic)
-
-    # 每组只取前 100 条再求和
-    for tid, corr_list in full_groups.items():
-        full_correct[tid] = sum(corr_list[:100])
-
-    # 打印
-    for tid in sorted(set(warmup_correct) | set(full_correct)):
-        print(f"[{tid}]  warmup correct = {warmup_correct[tid]},  "
-              f"full correct (top-100) = {full_correct[tid]}")
+    # 输出统计结果
+    if args.use_exec_check:
+        full_groups = defaultdict(list)
+        for _, row in df.iterrows():
+            tid  = row["task_id"]
+            ic   = row["is_correct"] or 0
+            ttyp = row["trace_type"]
+    
+            if ttyp == "warmup":
+                warmup_correct[tid] += ic
+            elif ttyp == "full":
+                full_groups[tid].append(ic)
+    
+        # 每组只取前 100 条再求和
+        for tid, corr_list in full_groups.items():
+            full_correct[tid] = sum(corr_list[:100])
+    
+        # 打印
+        for tid in sorted(set(warmup_correct) | set(full_correct)):
+            print(f"[{tid}]  warmup correct = {warmup_correct[tid]},  "
+                  f"full correct (top-100) = {full_correct[tid]}")
 
 # ---------------------------
 # flush helper: write or append to excel/csv
