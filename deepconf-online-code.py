@@ -261,6 +261,7 @@ def run_pipeline(args):
     pass_cache = {}  # candidate -> bool for exec check caching
 
     for idx, entry in enumerate(tasks):
+        difficulty = entry.get("difficulty") or None
         task_id = entry.get("task_id") or entry.get("id") or f"q{idx}"
         prompt = entry.get("prompt") or entry.get("question") or ""
         # detect reference answer if present
@@ -293,7 +294,7 @@ def run_pipeline(args):
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
 
         for tr in traces:
-            raw_text        = tr.get("text") or "" 
+            raw_text        = tr.get("text") or ""
             #cleaned_text    = filter_code(raw_text)
             cleaned_text    = extract_code(raw_text)
             group_scores = [s for _, s in tr.get('group_conf_tokens', [])]
@@ -372,29 +373,21 @@ def run_pipeline(args):
                     check_detail = {"method": "string_compare", "error": str(e)}
             
             # append row with detailed check info for later inspection
+            all_rows.append({
+                "task_id": task_id,
+                "full_answer": raw_text,
+                "extracted_answer": cleaned_text,
+                "token_and_conf": tr.get('token_confidence'),
+                "group_conf": tr.get('group_confidence'),
+                "min_group_mean": min_group_mean,
+                #"check_detail": check_detail,
+                "trace_type": trace_type,
+            })
             if args.use_exec_check:
-                all_rows.append({
-                    "task_id": task_id,
-                    "full_answer": raw_text,
-                    "extracted_answer": cleaned_text,
-                    "token_and_conf": tr.get('token_confidence'),
-                    "group_conf": tr.get('group_confidence'),
-                    "min_group_mean": min_group_mean,
-                    "is_correct": is_corr,
-                    #"check_detail": check_detail,
-                    "trace_type": trace_type,
-                })
-            else:
-                all_rows.append({
-                    "task_id": task_id,
-                    "full_answer": raw_text,
-                    "extracted_answer": cleaned_text,
-                    "token_and_conf": tr.get('token_confidence'),
-                    "group_conf": tr.get('group_confidence'),
-                    "min_group_mean": min_group_mean,
-                    #"check_detail": check_detail,
-                    "trace_type": trace_type,
-                })
+                all_rows.append({"is_correct": is_corr})
+            if difficulty is not None:
+                all_rows.append({"difficulty": difficulty})
+
     # final write
     if all_rows:
         flush_to_disk_partial(all_rows, args.out, header_mode=True)
@@ -429,11 +422,6 @@ def run_pipeline(args):
 # flush helper: write or append to excel/csv
 # ---------------------------
 def flush_to_disk_partial(rows, out_path, header_mode=True):
-    """
-    Append rows to out_path. If out_path endswith .xlsx and pandas available, create/append Excel.
-    Else fallback to CSV (append).
-    header_mode: if True create file with header; if False append without header.
-    """
     is_xlsx = str(out_path).lower().endswith(".xlsx")
     is_csv = str(out_path).lower().endswith(".csv")
     # prefer Excel if pandas available and extension is xlsx
@@ -461,6 +449,10 @@ def flush_to_disk_partial(rows, out_path, header_mode=True):
                 writer = csv.DictWriter(f, fieldnames=["task_id","full_answer","extracted_answer","token_and_conf","group_conf","min_group_mean","is_correct","trace_type"])
             else:
                 writer = csv.DictWriter(f, fieldnames=["task_id","full_answer","extracted_answer","token_and_conf","group_conf","min_group_mean","trace_type"])
+            if 'difficulty' in rows.values():
+                writer = csv.DictWriter(f, fieldnames=["task_id","difficulty","full_answer","extracted_answer","token_and_conf","group_conf","min_group_mean","is_correct","trace_type"])
+            else:
+                writer = csv.DictWriter(f, fieldnames=["task_id","difficulty","full_answer","extracted_answer","token_and_conf","group_conf","min_group_mean","trace_type"])
             if write_header:
                 writer.writeheader()
             for r in rows:
