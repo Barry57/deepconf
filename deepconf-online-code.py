@@ -384,9 +384,9 @@ def run_pipeline(args):
                 "trace_type": trace_type,
             })
             if args.use_exec_check:
-                all_rows.append({"is_correct": is_corr})
+                all_rows["is_correct"] = is_corr
             if difficulty is not None:
-                all_rows.append({"difficulty": difficulty})
+                all_rows["difficulty"] = difficulty
 
     # final write
     if all_rows:
