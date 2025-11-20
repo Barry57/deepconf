@@ -373,20 +373,20 @@ def run_pipeline(args):
                     check_detail = {"method": "string_compare", "error": str(e)}
             
             # append row with detailed check info for later inspection
-            all_rows.append({
+            row = {
                 "task_id": task_id,
                 "full_answer": raw_text,
                 "extracted_answer": cleaned_text,
                 "token_and_conf": tr.get('token_confidence'),
                 "group_conf": tr.get('group_confidence'),
                 "min_group_mean": min_group_mean,
-                #"check_detail": check_detail,
                 "trace_type": trace_type,
-            })
+            }
             if args.use_exec_check:
-                all_rows["is_correct"] = is_corr
+                row["is_correct"] = is_corr
             if difficulty is not None:
-                all_rows["difficulty"] = difficulty
+                row["difficulty"] = difficulty
+            all_rows.append(row)
 
     # final write
     if all_rows:
