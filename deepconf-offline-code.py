@@ -120,17 +120,9 @@ def stream_jsonl(filename):
 from typing import Optional
 def generate_traces_vllm(model_path, prompt, tokenizer=None, n_samples=200,
                          temperature=0.6, max_tokens=60000, logprobs=20, tp_size=1,
-                         window_size=1024, stride=None, save_json_path: Optional[str]=None):
+                         window_size=1024, stride=None, save_json_path: Optional[str]=None, llm=None):
     if LLM is None or SamplingParams is None:
         raise RuntimeError("vllm not available. Install vllm and ensure import succeeds.")
-    llm = LLM(
-        model=model_path,
-        tensor_parallel_size=tp_size,
-        enable_prefix_caching=False,
-        trust_remote_code=True,
-        max_model_len=32768,
-        gpu_memory_utilization=0.8,
-    )
 
     token_conf_pairs_all = []
     group_conf_all = []
@@ -163,7 +155,15 @@ def run_pipeline(args):
         dataset_path = args.dataset
     else:
         dataset_path = maybe_download_humaneval(target_dir=".", filename="HumanEval.jsonl")
-
+    llm = LLM(
+        model=model_path,
+        tensor_parallel_size=tp_size,
+        enable_prefix_caching=False,
+        trust_remote_code=True,
+        max_model_len=32768,
+        gpu_memory_utilization=0.8,
+    )
+    
     # load dataset lines
     dataset = []
     for item in stream_jsonl(dataset_path):
@@ -209,7 +209,7 @@ def run_pipeline(args):
         gen_start = time.time()
         traces = generate_traces_vllm(args.model, prompt, tokenizer,
                                       n_samples=args.traces_per_task, temperature=args.temperature,
-                                      max_tokens=args.max_tokens, logprobs=args.logprobs, tp_size=args.tp_size, window_size = args.window_size)
+                                      max_tokens=args.max_tokens, logprobs=args.logprobs, tp_size=args.tp_size, window_size = args.window_size,llm=llm)
         gen_time = time.time() - gen_start
         print(f"  generation time: {gen_time:.2f}s, obtained {len(traces)} traces")
 
