@@ -297,12 +297,6 @@ def run_pipeline(args):
                 "is_correct": is_corr,
                 "check_detail": check_detail,
             })
-
-        # optional: flush to disk periodically to avoid huge memory usage
-        if len(all_rows) >= args.flush_every:
-            flush_to_disk_partial(all_rows, args.out, header_mode=(idx==0))
-            all_rows = []
-
     # final write
     if all_rows:
         flush_to_disk_partial(all_rows, args.out, header_mode=True)
