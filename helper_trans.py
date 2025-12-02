@@ -135,11 +135,10 @@ def process_output(output, ground_truth, window_size, tokenizer=None):
     }
 
 def process_batch_results(batch_outputs, ground_truth, window_size, tokenizer):
-    if hasattr(batch_outputs, "choices"):
-        traces = []
-        trace_data = batch_outputs.choices[0].message.content
-        traces.append(trace_data)
-        return {'traces': traces}
+    if hasattr(batch_outputs, "choices"):  # OpenAI/Databricks
+        text = batch_outputs.choices[0].message.content
+        trace_data = {"text": text}
+        return {"traces": [trace_data]}
     else:
         question_outputs = batch_outputs[0].outputs
         traces = []
