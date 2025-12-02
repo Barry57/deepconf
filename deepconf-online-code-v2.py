@@ -159,7 +159,7 @@ def generate_traces(
     # ---------- final：循环采「full 子段」 ----------
     collected_full = 0
     budget_left = total_budget - warmup_traces
-    raw_final_traces = []          # 1. 攒原始样本（含子段）
+    raw_final_traces = []
 
     while budget_left > 0 and collected_full < reach_traces:
         batch_n = min(100, budget_left)
@@ -172,8 +172,8 @@ def generate_traces(
         for t in batch_traces:
             if not t.get('stopped', False):
                 collected_full += 1
-
         budget_left -= batch_n
+        
         # 3. 早停：段数已够
         if collected_full >= reach_traces:
             break
@@ -185,7 +185,8 @@ def generate_traces(
         trace['group_confidence'] = group_conf_str
         return trace
 
-    # ---------- 合并：用 raw_final_traces，别再覆盖 ----------
+    print("nihao")
+    print(warmup_result)
     warm_traces = warmup_result.get('traces', []) if warmup_result else []
     formatted_warm = [format_trace(t) for t in warm_traces]
     formatted_final = [format_trace(t) for t in raw_final_traces]
