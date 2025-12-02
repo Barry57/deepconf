@@ -178,15 +178,9 @@ def generate_traces(
         if collected_full >= reach_traces:
             break
 
-    def format_trace(trace):
-        pairs_str = make_token_conf_pairs(trace.get('tokens', []), trace.get('confs', []))
-        group_conf_str = " ".join(f"{t}:{s:.4f}" for t, s in trace.get('group_conf_tokens', []))
-        trace['token_confidence'] = pairs_str
-        trace['group_confidence'] = group_conf_str
-        return trace
     warm_traces = warmup_result.get('traces', []) if warmup_result else []
-    formatted_warm = [format_trace(t) for t in warm_traces]
-    formatted_final = [format_trace(t) for t in raw_final_traces]
+    formatted_warm = [t for t in warm_traces]
+    formatted_final = [t for t in raw_final_traces]
     for t in formatted_warm:
         t['_stage'] = 'warmup'
     for t in formatted_final:
