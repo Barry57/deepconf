@@ -139,7 +139,7 @@ def process_batch_results(batch_outputs, ground_truth, window_size, tokenizer):
         traces = []
         trace_data = batch_outputs.choices[0].message.content
         traces.append(trace_data)
-        return {'traces': text}
+        return {'traces': traces}
     else:
         question_outputs = batch_outputs[0].outputs
         traces = []
