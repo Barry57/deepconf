@@ -184,9 +184,6 @@ def generate_traces(
         trace['token_confidence'] = pairs_str
         trace['group_confidence'] = group_conf_str
         return trace
-
-    print("nihao")
-    print(warmup_result)
     warm_traces = warmup_result.get('traces', []) if warmup_result else []
     formatted_warm = [format_trace(t) for t in warm_traces]
     formatted_final = [format_trace(t) for t in raw_final_traces]
