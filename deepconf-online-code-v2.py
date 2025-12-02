@@ -150,7 +150,7 @@ def generate_traces(
                 {"role": "system","content": "You are a helpful coding assistant. Generate clean, efficient Python/R code"},
                 {"role": "user","content": prompt}
             ],
-            model="gpt5-chat"
+            model="gpt4o"
         )
         result = process_batch_results(out, ground_truth="", window_size=window_size, tokenizer=tokenizer)
         warmup_results.extend(result.get("traces", []))
