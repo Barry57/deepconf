@@ -12,6 +12,8 @@ from collections import defaultdict
 import numpy as np
 import pandas as pd
 from helper_trans import process_batch_results
+from openai import OpenAI
+
 
 def make_token_conf_pairs(tokens, confs):
     if not tokens or not confs:
@@ -198,6 +200,8 @@ def generate_traces(
 # main pipeline (no jsonl output, single Excel)
 # ---------------------------
 def run_pipeline(args):
+    client = OpenAI(api_key=args.token,
+                    base_url="https://adb-2678440713379013.13.azuredatabricks.net/serving-endpoints")
     # prepare dataset path
     if args.dataset:
         dataset_path = args.dataset
@@ -442,7 +446,7 @@ def flush_to_disk_partial(rows, out_path, header_mode=True):
 def parse_args():
     p = argparse.ArgumentParser()
     p.add_argument("--model", type=str, required=True, help="hub id or local model dir")
-    p.add_argument("--client", required=True)
+    p.add_argument("--token", type=str, required=True)
     p.add_argument("--dataset", type=str, default=None, help="jsonl dataset path; if omitted, auto-download HumanEval")
     p.add_argument("--out", type=str, required=True, help="output path (xlsx preferred) e.g. /dbfs/FileStore/.../humaneval_traces.xlsx")
     p.add_argument("--max_tasks", type=int, default=164, help="max number of tasks to process")
@@ -469,12 +473,9 @@ def parse_args():
 def main():
     args = parse_args()
     args.max_tasks = int(args.max_tasks)
-
     # map simpler names for generate wrapper
     args.out = args.out
-
     # run pipeline
     run_pipeline(args)
-
 if __name__ == "__main__":
     main()
