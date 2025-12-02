@@ -135,22 +135,26 @@ def process_output(output, ground_truth, window_size, tokenizer=None):
     }
 
 def process_batch_results(batch_outputs, ground_truth, window_size, tokenizer):
-    question_outputs = batch_outputs[0].outputs
-    traces = []
-    min_confs = []
-    total_tokens = 0
-    for output in question_outputs:
-        trace_data = process_output(output, ground_truth, window_size, tokenizer)
-        traces.append(trace_data)
-        min_confs.append(trace_data["min_conf"])
-        total_tokens += trace_data["num_tokens"]
-    return {
-        'traces': traces,
-        'min_confs': min_confs,
-        'ground_truth': ground_truth,
-        'total_tokens': total_tokens,
-        'num_traces': len(traces)
-    }
+    if hasattr(batch_outputs, "choices"):
+        text = batch_outputs.choices[0].message.content
+        return text
+    else:
+        question_outputs = batch_outputs[0].outputs
+        traces = []
+        min_confs = []
+        total_tokens = 0
+        for output in question_outputs:
+            trace_data = process_output(output, ground_truth, window_size, tokenizer)
+            traces.append(trace_data)
+            min_confs.append(trace_data["min_conf"])
+            total_tokens += trace_data["num_tokens"]
+        return {
+            'traces': traces,
+            'min_confs': min_confs,
+            'ground_truth': ground_truth,
+            'total_tokens': total_tokens,
+            'num_traces': len(traces)
+        }
 
 def compute_least_grouped_with_tokens(tokens, confs, group_size):
     """返回 [(窗口token字符串, 窗口平均分), ...]"""
