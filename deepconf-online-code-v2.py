@@ -143,50 +143,23 @@ def generate_traces(
         confidence_percentile: float = 10.0,
         client = None):
 
-    # ---------- warmup ----------
-    warmup_traces = min(warmup_traces, total_budget - 1)
-    if warmup_traces > 0:
-        warmup_outputs = client.chat.completions.create(messages=[{"role": "system","content": "You are a helpful coding assistant. Generate clean, efficient Python/R code"},{"role": "user","content": prompt}],model="gpt5-chat")
-        warmup_result = process_batch_results(
-            warmup_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
-        if 'min_confs' in warmup_result and len(warmup_result['min_confs']) > 0:
-            conf_bar = float(np.percentile(warmup_result['min_confs'], confidence_percentile))
-        else:
-            conf_bar = 0.0
-    else:
-        conf_bar = 0.0
-
-    # ---------- final：循环采「full 子段」 ----------
-    collected_full = 0
-    budget_left = total_budget - warmup_traces
-    raw_final_traces = []
-
-    while budget_left > 0 and collected_full < reach_traces:
-        batch_n = min(100, budget_left)
-        final_outputs = client.chat.completions.create(messages=[{"role": "system","content": "You are a helpful coding assistant. Generate clean, efficient Python/R code"},{"role": "user","content": prompt}],model="gpt5-chat")
-        final_result = process_batch_results(final_outputs, ground_truth="", window_size=window_size, tokenizer=tokenizer)
-        batch_traces = final_result.get('traces', []) or []
-        raw_final_traces.extend(batch_traces)
-
-        # 2. 拆完段再数「full 子段」
-        for t in batch_traces:
-            if not t.get('stopped', False):
-                collected_full += 1
-        budget_left -= batch_n
-        
-        # 3. 早停：段数已够
-        if collected_full >= reach_traces:
-            break
-
-    warm_traces = warmup_result.get('traces', []) if warmup_result else []
-    formatted_warm = [t for t in warm_traces]
-    formatted_final = [t for t in raw_final_traces]
-    for t in formatted_warm:
-        t['_stage'] = 'warmup'
-    for t in formatted_final:
-        t['_stage'] = 'final'
-    traces = formatted_warm + formatted_final
-    return traces
+    warmup_results = []
+    for _ in range(warmup_traces):
+        out = client.chat.completions.create(
+            messages=[
+                {"role": "system","content": "You are a helpful coding assistant. Generate clean, efficient Python/R code"},
+                {"role": "user","content": prompt}
+            ],
+            model="gpt5-chat"
+        )
+        result = process_batch_results(out, ground_truth="", window_size=window_size, tokenizer=tokenizer)
+        warmup_results.extend(result.get("traces", []))
+    
+    # 给每条标记 stage
+    for t in warmup_results:
+        t["_stage"] = "warmup"
+    
+    return warmup_results
                           
 # ---------------------------
 # main pipeline (no jsonl output, single Excel)
